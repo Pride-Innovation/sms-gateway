@@ -1,0 +1,66 @@
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+sms:
+  smpp:
+    host: ${SMPP_HOST}
+    port: ${SMPP_PORT}
+
+    # DO NOT hardcode production credentials here.
+    # Use environment variables/secrets:
+    systemId: ${SMPP_USER_NAME}
+    password: ${SMPP_PASSWORD}
+
+    systemType: ""
+    bindType: TRANSCEIVER
+    interfaceVersion: 34
+
+    connectTimeoutMs: 30000
+    requestExpiryTimeoutMs: 30000
+    bindTimeoutMs: 30000
+
+    windowSize: 20
+    enquireLinkIntervalMs: 30000
+    reconnectDelayMs: 10000
+
+    registeredDelivery: true
+
+    defaultSenderId: ${SMPP_SENDER_ID}
+    defaultSourceMsisdn: ${SMPP_MSISDN}
+
+    # Airtel contract: TPS=20. This should represent total segments/sec per instance.
+    # If you run 2 pods, set this to 10 each (or implement distributed rate limiting).
+    tps: 20
+
+    # New: number of SMPP sessions (start with 1; increase only if Airtel allows)
+    sessions: 1
+
+  addressing:
+    # For alphanumeric sender IDs:
+    sourceTonAlphanumeric: 5   # ALPHANUMERIC
+    sourceNpiAlphanumeric: 0   # UNKNOWN
+    # For international numeric (E.164) numbers:
+    sourceTonInternational: 1  # INTERNATIONAL
+    sourceNpiE164: 1           # E164
+    destTonInternational: 1    # INTERNATIONAL
+    destNpiE164: 1             # E164
+
+  gateway:
+    # New: bounded queue + workers for peak handling
+    queueCapacity: 20000
+    workerThreads: 16
+    maxTextChars: 2000
+
+    # Alphanumeric sender IDs are commonly limited to 11 by many SMSCs.
+    # If your provider allows 12+ (e.g. "PrideBankLtd" is 12), increase this.
+    maxAlphanumericSenderIdLength: 11
