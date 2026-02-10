@@ -5,12 +5,18 @@ import com.cloudhopper.smpp.pdu.SubmitSm;
 import com.cloudhopper.smpp.pdu.SubmitSmResp;
 import com.cloudhopper.smpp.type.Address;
 import com.google.common.util.concurrent.RateLimiter;
+import com.sms.gateway.carrier.Carrier;
+import com.sms.gateway.carrier.CarrierRouter;
 import com.sms.gateway.config.AddressingProperties;
+import com.sms.gateway.config.AirtelAddressingProperties;
+import com.sms.gateway.config.AirtelSmppProperties;
 import com.sms.gateway.config.SmsGatewayProperties;
 import com.sms.gateway.config.SmppProperties;
 import com.sms.gateway.smpp.SmppSessionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
@@ -37,28 +43,46 @@ import java.util.UUID;
 public class SmsService {
     private static final Logger log = LoggerFactory.getLogger(SmsService.class);
 
-    private final SmppSessionManager smpp;
-    private final SmppProperties props;
-    private final AddressingProperties addrProps;
+    private final SmppSessionManager mtnSmpp;
+    private final SmppSessionManager airtelSmpp;
+
+    private final SmppProperties mtnProps;
+    private final AirtelSmppProperties airtelProps;
+
+    private final AddressingProperties mtnAddrProps;
+    private final AirtelAddressingProperties airtelAddrProps;
+
     private final SmsGatewayProperties gwProps;
 
-    private final RateLimiter limiter;
+    private final CarrierRouter carrierRouter;
+
+    private final RateLimiter mtnLimiter;
+    private final RateLimiter airtelLimiter;
     private final SmsStore store;
     private final SmsDispatcher dispatcher;
 
     public SmsService(
-            SmppSessionManager smpp,
-            SmppProperties props,
-            AddressingProperties addrProps,
-            SmsGatewayProperties gwProps
+            @Qualifier("mtnSmppSessionManager") SmppSessionManager mtnSmpp,
+            @Qualifier("airtelSmppSessionManager") ObjectProvider<SmppSessionManager> airtelSmppProvider,
+            SmppProperties mtnProps,
+            AirtelSmppProperties airtelProps,
+            AddressingProperties mtnAddrProps,
+            AirtelAddressingProperties airtelAddrProps,
+            SmsGatewayProperties gwProps,
+            CarrierRouter carrierRouter
     ) {
-        this.smpp = smpp;
-        this.props = props;
-        this.addrProps = addrProps;
+        this.mtnSmpp = mtnSmpp;
+        this.airtelSmpp = airtelSmppProvider.getIfAvailable();
+        this.mtnProps = mtnProps;
+        this.airtelProps = airtelProps;
+        this.mtnAddrProps = mtnAddrProps;
+        this.airtelAddrProps = airtelAddrProps;
         this.gwProps = gwProps;
+        this.carrierRouter = carrierRouter;
 
         // TPS here is "segments per second" per application instance.
-        this.limiter = RateLimiter.create(Math.max(1, props.getTps()));
+        this.mtnLimiter = RateLimiter.create(Math.max(1, mtnProps.getTps()));
+        this.airtelLimiter = RateLimiter.create(Math.max(1, airtelProps.getTps()));
 
         // In-memory store is fine for dev; for production replace with Redis/DB implementation.
         this.store = new InMemorySmsStore();
@@ -85,20 +109,17 @@ public class SmsService {
             String idempotencyKey
     ) {
         String normalized = normalizeMsisdn(toMsisdn);
+        Carrier carrier = carrierRouter.resolveOrThrow(normalized);
+
+        if (carrier == Carrier.AIRTEL && airtelSmpp == null) {
+            throw new IllegalArgumentException(
+                "Destination resolves to AIRTEL but Airtel SMPP is not configured. " +
+                    "Set sms.airtel.smpp.host/port/systemId/password (AIRTEL_SMPP_* env vars)."
+            );
+        }
 
         String trimmedText = (text == null) ? "" : text.trim();
-        if (trimmedText.isBlank()) throw new IllegalArgumentException("text must not be blank");
-        if (trimmedText.length() > gwProps.getMaxTextChars()) {
-            throw new IllegalArgumentException("text too long (max " + gwProps.getMaxTextChars() + " chars)");
-        }
-
-        String effectiveSender = (senderId == null || senderId.isBlank())
-                ? props.getDefaultSenderId()
-                : senderId.trim();
-
-        if (effectiveSender == null || effectiveSender.isBlank()) {
-            throw new IllegalArgumentException("senderId/defaultSenderId is blank");
-        }
+        String effectiveSender = getString(senderId, trimmedText, carrier);
 
         int maxAlphaLen = Math.max(1, gwProps.getMaxAlphanumericSenderIdLength());
 
@@ -121,18 +142,33 @@ public class SmsService {
         SmsStatus status = new SmsStatus(requestId, normalized, effectiveSender, Instant.now(), "QUEUED", null);
         store.put(status, stableKey);
 
-        log.info("Normalized MSISDN :: {}", normalized);
-        log.info("Trimmed Text Message :: {}", trimmedText);
-        log.info("Request ID :: {}", requestId);
-        log.info("Effective Sender :: {}", effectiveSender);
-
-        boolean accepted = dispatcher.tryEnqueue(new SmsJob(requestId, normalized, trimmedText, effectiveSender));
+        boolean accepted = dispatcher.tryEnqueue(new SmsJob(requestId, normalized, trimmedText, effectiveSender, carrier));
         if (!accepted) {
             store.updateState(requestId, "REJECTED", "Queue full");
             throw new TooManyRequestsException("SMS queue full, try later");
         }
 
         return requestId;
+    }
+
+    private String getString(String senderId, String trimmedText, Carrier carrier) {
+        if (trimmedText.isBlank()) throw new IllegalArgumentException("text must not be blank");
+        if (trimmedText.length() > gwProps.getMaxTextChars()) {
+            throw new IllegalArgumentException("text too long (max " + gwProps.getMaxTextChars() + " chars)");
+        }
+
+        String providerDefaultSender = (carrier == Carrier.MTN)
+                ? mtnProps.getDefaultSenderId()
+                : airtelProps.getDefaultSenderId();
+
+        String effectiveSender = (senderId == null || senderId.isBlank())
+                ? providerDefaultSender
+                : senderId.trim();
+
+        if (effectiveSender == null || effectiveSender.isBlank()) {
+            throw new IllegalArgumentException("senderId/defaultSenderId is blank");
+        }
+        return effectiveSender;
     }
 
     public SmsStatus getStatus(String requestId) {
@@ -153,7 +189,14 @@ public class SmsService {
         try {
             store.updateState(requestId, "SENDING", null);
 
-            Address source = buildSourceAddress(job.senderId());
+            Carrier carrier = job.carrier();
+            SmppSessionManager smpp = (carrier == Carrier.MTN) ? mtnSmpp : requireAirtelSmpp();
+            boolean registeredDelivery = (carrier == Carrier.MTN) ? mtnProps.isRegisteredDelivery() : airtelProps.isRegisteredDelivery();
+            int requestExpiryTimeoutMs = (carrier == Carrier.MTN) ? mtnProps.getRequestExpiryTimeoutMs() : airtelProps.getRequestExpiryTimeoutMs();
+            AddressingProperties addrProps = (carrier == Carrier.MTN) ? mtnAddrProps : toAddressingProperties(airtelAddrProps);
+            RateLimiter limiter = (carrier == Carrier.MTN) ? mtnLimiter : airtelLimiter;
+
+            Address source = buildSourceAddress(job.senderId(), addrProps);
 
             Address dest = new Address(
                     (byte) addrProps.getDestTonInternational(),
@@ -176,7 +219,7 @@ public class SmsService {
                 sm.setDestAddress(dest);
                 sm.setDataCoding(SmppConstants.DATA_CODING_UCS2);
 
-                sm.setRegisteredDelivery(props.isRegisteredDelivery()
+                sm.setRegisteredDelivery(registeredDelivery
                         ? SmppConstants.REGISTERED_DELIVERY_SMSC_RECEIPT_REQUESTED
                         : SmppConstants.REGISTERED_DELIVERY_SMSC_RECEIPT_NOT_REQUESTED
                 );
@@ -196,7 +239,7 @@ public class SmsService {
                     sm.setShortMessage(payload);
                 }
 
-                SubmitSmResp resp = smpp.send(sm, props.getRequestExpiryTimeoutMs());
+                SubmitSmResp resp = smpp.send(sm, requestExpiryTimeoutMs);
 
                 int cs = resp.getCommandStatus();
                 String messageId = resp.getMessageId();
@@ -224,7 +267,16 @@ public class SmsService {
         }
     }
 
-    private Address buildSourceAddress(String from) {
+    private SmppSessionManager requireAirtelSmpp() {
+        if (airtelSmpp == null) {
+            throw new IllegalStateException(
+                    "Airtel SMPP is not configured. Set sms.airtel.smpp.host/port/systemId/password (AIRTEL_SMPP_* env vars)."
+            );
+        }
+        return airtelSmpp;
+    }
+
+    private Address buildSourceAddress(String from, AddressingProperties addrProps) {
         if (isAlphanumeric(from)) {
             return new Address(
                     (byte) addrProps.getSourceTonAlphanumeric(),
@@ -239,6 +291,17 @@ public class SmsService {
                 (byte) addrProps.getSourceNpiE164(),
                 normalizeMsisdn(from)
         );
+    }
+
+    private AddressingProperties toAddressingProperties(AirtelAddressingProperties ap) {
+        AddressingProperties p = new AddressingProperties();
+        p.setSourceTonAlphanumeric(ap.getSourceTonAlphanumeric());
+        p.setSourceNpiAlphanumeric(ap.getSourceNpiAlphanumeric());
+        p.setSourceTonInternational(ap.getSourceTonInternational());
+        p.setSourceNpiE164(ap.getSourceNpiE164());
+        p.setDestTonInternational(ap.getDestTonInternational());
+        p.setDestNpiE164(ap.getDestNpiE164());
+        return p;
     }
 
     private boolean isAlphanumeric(String s) {
