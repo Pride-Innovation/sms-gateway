@@ -1,6 +1,17 @@
 server:
   port: 8080
 
+spring:
+  datasource:
+    url: ${MYSQL_URL}
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
 management:
   endpoints:
     web:
@@ -44,6 +55,36 @@ sms:
 
     # New: number of SMPP sessions (start with 1; increase only if Airtel allows)
     sessions: 1
+
+  # Additional provider: Airtel.
+  # Configure via environment variables (for example AIRTEL_SMPP_HOST, AIRTEL_SMPP_PORT, etc).
+  airtel:
+    smpp:
+      host: ${AIRTEL_SMPP_HOST:}
+      port: ${AIRTEL_SMPP_PORT:0}
+      systemId: ${AIRTEL_SMPP_USER_NAME:}
+      password: ${AIRTEL_SMPP_PASSWORD:}
+      systemType: ""
+      bindType: TRANSCEIVER
+      interfaceVersion: 34
+      connectTimeoutMs: 30000
+      requestExpiryTimeoutMs: 30000
+      bindTimeoutMs: 30000
+      windowSize: 20
+      enquireLinkIntervalMs: 30000
+      reconnectDelayMs: 10000
+      registeredDelivery: true
+      defaultSenderId: ${AIRTEL_SMPP_SENDER_ID:}
+      tps: ${AIRTEL_SMPP_TPS:20}
+      sessions: ${AIRTEL_SMPP_SESSIONS:1}
+
+    addressing:
+      sourceTonAlphanumeric: 5
+      sourceNpiAlphanumeric: 0
+      sourceTonInternational: 1
+      sourceNpiE164: 1
+      destTonInternational: 1
+      destNpiE164: 1
 
   addressing:
     # For alphanumeric sender IDs:
