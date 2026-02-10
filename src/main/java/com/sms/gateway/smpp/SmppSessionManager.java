@@ -14,6 +14,7 @@ import com.cloudhopper.smpp.pdu.SubmitSmResp;
 import com.sms.gateway.config.SmppProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,7 +46,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * You must treat that as failure (e.g., 0x0000000A “Source address invalid”).
  * - This class does not implement retries/backoff/persistence; those belong in your service layer.
  */
-@Component
+@Component("mtnSmppSessionManager")
+@Primary
 public class SmppSessionManager {
     private static final Logger log = LoggerFactory.getLogger(SmppSessionManager.class);
 
@@ -142,7 +144,7 @@ public class SmppSessionManager {
      * <p>
      * - ref: same across all segments of a message
      * - total: total number of segments
-     * - seq: 1-based segment index (1..total)
+     * - seq: 1-based segment index (1…total)
      * <p>
      * NOTE: Parameter order is (total, seq, ref) but wire order is (ref, total, seq).
      * This is correct but easy to misread—keep it in mind when calling it.
@@ -392,7 +394,7 @@ public class SmppSessionManager {
             }
 
             // In some builds, this returns WindowFuture instead of a direct response.
-            WindowFuture<Integer, PduRequest, PduResponse> fut = s.sendRequestPdu(sm, timeoutMs, false);
+            WindowFuture<?, ?, ?> fut = s.sendRequestPdu(sm, timeoutMs, false);
 
             PduResponse resp = awaitWindowResponse(fut, timeoutMs);
 
@@ -449,6 +451,7 @@ public class SmppSessionManager {
         }
 
         @Override
+        @SuppressWarnings("rawtypes")
         public PduResponse firePduRequestReceived(PduRequest request) {
             log.debug("SMPP inbound PDU session={} cmdId={} seq={}", name, request.getCommandId(), request.getSequenceNumber());
             return request.createResponse();
