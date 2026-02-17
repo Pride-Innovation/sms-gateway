@@ -4,7 +4,7 @@ server:
 spring:
   datasource:
     url: ${MYSQL_URL}
-    username: ${MYSQL_USER:root}
+    username: ${MYSQL_USER}
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
@@ -105,3 +105,9 @@ sms:
     # Alphanumeric sender IDs are commonly limited to 11 by many SMSCs.
     # If your provider allows 12+ (e.g. "PrideBankLtd" is 12), increase this.
     maxAlphanumericSenderIdLength: 11
+
+app:
+  security:
+    admin:
+      username: ${ADMIN_USERNAME}
+      password: ${ADMIN_PASSWORD}
