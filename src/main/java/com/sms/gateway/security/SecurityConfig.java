@@ -5,7 +5,6 @@ import com.sms.gateway.users.ApiClientService;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -28,10 +27,12 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             ObjectMapper objectMapper,
-            ApiClientService apiClientService
+                        ApiClientService apiClientService,
+                        JwtTokenService jwtTokenService
     ) throws Exception {
 
         ApiClientAuthFilter apiClientAuthFilter = new ApiClientAuthFilter(apiClientService);
+                JwtAuthFilter jwtAuthFilter = new JwtAuthFilter(jwtTokenService);
 
         http
                 .csrf(csrf -> csrf.disable())
@@ -43,16 +44,19 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Health endpoints (keep minimal)
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                        // Admin dashboard APIs
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                        // SMS APIs require API-client auth
+                        // Auth endpoints
+                        .requestMatchers("/api/auth/**").permitAll()
+                        // SMS APIs require API-client auth (no JWT)
                         .requestMatchers("/api/sms/**").hasRole("API_CLIENT")
-                        // Allow everything else for now (can tighten later)
-                        .anyRequest().permitAll()
+                        // Admin APIs require ADMIN role via JWT
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        // Everything else requires authentication
+                        .anyRequest().authenticated()
                 )
-                .httpBasic(Customizer.withDefaults())
                 // Ensure API client auth runs for /api/sms/** before authorization
-                .addFilterBefore(apiClientAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(apiClientAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // JWT auth for the rest
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
