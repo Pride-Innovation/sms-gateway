@@ -1,0 +1,52 @@
+package com.sms.gateway.message;
+
+import jakarta.persistence.*;
+import jakarta.validation.constraints.Size;
+
+import java.time.Instant;
+
+@Entity
+@Table(name = "outbound_messages", indexes = {
+        @Index(name = "idx_outbound_messages_request_id", columnList = "requestId", unique = true),
+        @Index(name = "idx_outbound_messages_phone", columnList = "phone")
+})
+public class OutboundMessage {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, length = 100)
+    private String requestId;
+
+    @Column(nullable = false, length = 20)
+    private String phone;
+
+    @Column(nullable = false, length = 2000)
+    private String message;
+
+    @Size(max = 20)
+    @Column(length = 20)
+    private String senderId;
+
+    // Status: QUEUED / SENT / FAILED
+    @Column(nullable = false, length = 20)
+    private String status;
+
+    // Timestamp when the message send completed (SENT/FAILED). Null while QUEUED.
+    @Column(name = "date")
+    private Instant date;
+
+    public Long getId() { return id; }
+    public String getRequestId() { return requestId; }
+    public void setRequestId(String requestId) { this.requestId = requestId; }
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
+    public String getSenderId() { return senderId; }
+    public void setSenderId(String senderId) { this.senderId = senderId; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public Instant getDate() { return date; }
+    public void setDate(Instant date) { this.date = date; }
+}
