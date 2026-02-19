@@ -120,8 +120,8 @@ public class SmsService {
 
         if (carrier == Carrier.AIRTEL && airtelSmpp == null) {
             throw new IllegalArgumentException(
-                "Destination resolves to AIRTEL but Airtel SMPP is not configured. " +
-                    "Set sms.airtel.smpp.host/port/systemId/password (AIRTEL_SMPP_* env vars)."
+                    "Destination resolves to AIRTEL but Airtel SMPP is not configured. " +
+                            "Set sms.airtel.smpp.host/port/systemId/password (AIRTEL_SMPP_* env vars)."
             );
         }
 
