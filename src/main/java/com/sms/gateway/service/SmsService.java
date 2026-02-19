@@ -153,6 +153,7 @@ public class SmsService {
         OutboundMessage rec = new OutboundMessage();
         rec.setRequestId(requestId);
         rec.setPhone(normalized);
+        rec.setCarrier(carrier);
         rec.setMessage(trimmedText);
         rec.setSenderId(effectiveSender);
         rec.setStatus("QUEUED");

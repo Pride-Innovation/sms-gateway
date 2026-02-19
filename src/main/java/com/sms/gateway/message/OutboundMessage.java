@@ -1,5 +1,6 @@
 package com.sms.gateway.message;
 
+import com.sms.gateway.carrier.Carrier;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Size;
 
@@ -8,7 +9,8 @@ import java.time.Instant;
 @Entity
 @Table(name = "outbound_messages", indexes = {
         @Index(name = "idx_outbound_messages_request_id", columnList = "requestId", unique = true),
-        @Index(name = "idx_outbound_messages_phone", columnList = "phone")
+    @Index(name = "idx_outbound_messages_phone", columnList = "phone"),
+    @Index(name = "idx_outbound_messages_carrier", columnList = "carrier")
 })
 public class OutboundMessage {
     @Id
@@ -20,6 +22,10 @@ public class OutboundMessage {
 
     @Column(nullable = false, length = 20)
     private String phone;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private Carrier carrier;
 
     @Column(nullable = false, length = 2000)
     private String message;
@@ -41,6 +47,8 @@ public class OutboundMessage {
     public void setRequestId(String requestId) { this.requestId = requestId; }
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
+    public Carrier getCarrier() { return carrier; }
+    public void setCarrier(Carrier carrier) { this.carrier = carrier; }
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
     public String getSenderId() { return senderId; }
