@@ -7,10 +7,16 @@ spring:
     username: ${MYSQL_USER}
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximumPoolSize: 30
   jpa:
     hibernate:
       ddl-auto: update
     open-in-view: false
+    properties:
+      hibernate.jdbc.batch_size: 50
+      hibernate.order_inserts: true
+      hibernate.order_updates: true
 
 management:
   endpoints:
@@ -40,7 +46,7 @@ sms:
     requestExpiryTimeoutMs: 30000
     bindTimeoutMs: 30000
 
-    windowSize: 20
+    windowSize: 50
     enquireLinkIntervalMs: 30000
     reconnectDelayMs: 10000
 
@@ -70,7 +76,7 @@ sms:
       connectTimeoutMs: 30000
       requestExpiryTimeoutMs: 30000
       bindTimeoutMs: 30000
-      windowSize: 20
+      windowSize: 50
       enquireLinkIntervalMs: 30000
       reconnectDelayMs: 10000
       registeredDelivery: true
@@ -98,8 +104,8 @@ sms:
 
   gateway:
     # New: bounded queue + workers for peak handling
-    queueCapacity: 20000
-    workerThreads: 16
+    queueCapacity: 50000
+    workerThreads: 32
     maxTextChars: 2000
 
     # Alphanumeric sender IDs are commonly limited to 11 by many SMSCs.
