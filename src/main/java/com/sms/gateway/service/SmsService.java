@@ -28,6 +28,9 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
+import com.sms.gateway.message.OutboundMessage;
+import com.sms.gateway.message.OutboundMessageRepository;
+
 /**
  * Core application service:
  * - Validates and normalizes requests
@@ -60,6 +63,7 @@ public class SmsService {
     private final RateLimiter airtelLimiter;
     private final SmsStore store;
     private final SmsDispatcher dispatcher;
+    private final OutboundMessageRepository outboundMessageRepository;
 
     public SmsService(
             @Qualifier("mtnSmppSessionManager") SmppSessionManager mtnSmpp,
@@ -69,7 +73,9 @@ public class SmsService {
             AddressingProperties mtnAddrProps,
             AirtelAddressingProperties airtelAddrProps,
             SmsGatewayProperties gwProps,
-            CarrierRouter carrierRouter
+            CarrierRouter carrierRouter,
+            OutboundMessageRepository outboundMessageRepository,
+            SmsStore store
     ) {
         this.mtnSmpp = mtnSmpp;
         this.airtelSmpp = airtelSmppProvider.getIfAvailable();
@@ -79,13 +85,14 @@ public class SmsService {
         this.airtelAddrProps = airtelAddrProps;
         this.gwProps = gwProps;
         this.carrierRouter = carrierRouter;
+        this.outboundMessageRepository = outboundMessageRepository;
 
         // TPS here is "segments per second" per application instance.
         this.mtnLimiter = RateLimiter.create(Math.max(1, mtnProps.getTps()));
         this.airtelLimiter = RateLimiter.create(Math.max(1, airtelProps.getTps()));
 
-        // In-memory store is fine for dev; for production replace with Redis/DB implementation.
-        this.store = new InMemorySmsStore();
+        // SmsStore is now injected (MySQL-backed for robustness)
+        this.store = store;
 
         // Bounded async queue; for production durability replace with broker.
         this.dispatcher = new SmsDispatcher(
@@ -142,9 +149,25 @@ public class SmsService {
         SmsStatus status = new SmsStatus(requestId, normalized, effectiveSender, Instant.now(), "QUEUED", null);
         store.put(status, stableKey);
 
+        // Persist initial record (date null while queued)
+        OutboundMessage rec = new OutboundMessage();
+        rec.setRequestId(requestId);
+        rec.setPhone(normalized);
+        rec.setMessage(trimmedText);
+        rec.setSenderId(effectiveSender);
+        rec.setStatus("QUEUED");
+        rec.setDate(null);
+        outboundMessageRepository.save(rec);
+
         boolean accepted = dispatcher.tryEnqueue(new SmsJob(requestId, normalized, trimmedText, effectiveSender, carrier));
         if (!accepted) {
             store.updateState(requestId, "REJECTED", "Queue full");
+            // Persist REJECTED in outbound_messages with timestamp for auditing
+            outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
+                m.setStatus("REJECTED");
+                m.setDate(Instant.now());
+                outboundMessageRepository.save(m);
+            });
             throw new TooManyRequestsException("SMS queue full, try later");
         }
 
@@ -249,6 +272,12 @@ public class SmsService {
                     String reason = "submit_sm rejected: commandStatus=0x" + Integer.toHexString(cs);
                     store.updateState(requestId, "FAILED", reason);
 
+                    outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
+                        m.setStatus("FAILED");
+                        m.setDate(Instant.now());
+                        outboundMessageRepository.save(m);
+                    });
+
                     log.warn("SMS rejected requestId={} part={}/{} status=0x{} messageId={}",
                             requestId, i + 1, total, Integer.toHexString(cs), messageId);
 
@@ -261,9 +290,21 @@ public class SmsService {
 
             store.updateState(requestId, "SENT", null);
 
+            outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
+                m.setStatus("SENT");
+                m.setDate(Instant.now());
+                outboundMessageRepository.save(m);
+            });
+
         } catch (Exception e) {
             store.updateState(requestId, "FAILED", e.getMessage());
             log.warn("SMS failed requestId={} reason={}", requestId, e.getMessage());
+
+            outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
+                m.setStatus("FAILED");
+                m.setDate(Instant.now());
+                outboundMessageRepository.save(m);
+            });
         }
     }
 
