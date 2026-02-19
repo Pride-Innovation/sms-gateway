@@ -5,13 +5,20 @@ import com.sms.gateway.users.ApiClientService;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.ArrayList;
 
 @Configuration
 @EnableMethodSecurity
@@ -27,15 +34,20 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             ObjectMapper objectMapper,
-                        ApiClientService apiClientService,
-                        JwtTokenService jwtTokenService
+            ApiClientService apiClientService,
+            JwtTokenService jwtTokenService
     ) throws Exception {
 
         ApiClientAuthFilter apiClientAuthFilter = new ApiClientAuthFilter(apiClientService);
-                JwtAuthFilter jwtAuthFilter = new JwtAuthFilter(jwtTokenService);
+        JwtAuthFilter jwtAuthFilter = new JwtAuthFilter(jwtTokenService);
 
         http
-                .csrf(csrf -> csrf.disable())
+                .cors(Customizer.withDefaults())
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        // REST API is stateless/token or API-client auth; ignore CSRF here.
+                        .ignoringRequestMatchers("/api/**", "/actuator/**")
+                )
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(eh -> eh
                         .authenticationEntryPoint(new RestAuthenticationEntryPoint(objectMapper))
@@ -60,4 +72,20 @@ public class SecurityConfig {
 
         return http.build();
     }
+
+        @Bean
+        public CorsConfigurationSource corsConfigurationSource(SecurityProperties securityProperties) {
+                SecurityProperties.Cors c = securityProperties.getCors();
+                CorsConfiguration cfg = new CorsConfiguration();
+                cfg.setAllowedOrigins(new ArrayList<>(c.getAllowedOrigins()));
+                cfg.setAllowedMethods(new ArrayList<>(c.getAllowedMethods()));
+                cfg.setAllowedHeaders(new ArrayList<>(c.getAllowedHeaders()));
+                cfg.setExposedHeaders(new ArrayList<>(c.getExposedHeaders()));
+                cfg.setAllowCredentials(c.isAllowCredentials());
+                cfg.setMaxAge(c.getMaxAgeSeconds());
+
+                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+                source.registerCorsConfiguration("/**", cfg);
+                return source;
+        }
 }
