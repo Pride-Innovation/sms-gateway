@@ -2,6 +2,8 @@ package com.sms.gateway.carrier;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 
@@ -19,6 +21,18 @@ public class CarrierPrefixService {
                 : repo.findByCarrierOrderByPrefixAsc(carrier);
     }
 
+    public Page<CarrierPrefix> listPage(Carrier carrier, boolean activeOnly, Pageable pageable) {
+        return activeOnly
+                ? repo.findByCarrierAndActiveTrue(carrier, pageable)
+                : repo.findByCarrier(carrier, pageable);
+    }
+
+    public Page<CarrierPrefix> listAllPage(boolean activeOnly, Pageable pageable) {
+        return activeOnly
+                ? repo.findByActiveTrue(pageable)
+                : repo.findAllBy(pageable);
+    }
+
     @Transactional
     public CarrierPrefix upsert(Carrier carrier, String prefix, boolean active) {
         String cleaned = cleanPrefix(prefix);
@@ -28,6 +42,7 @@ public class CarrierPrefixService {
         existing.setCarrier(carrier);
         existing.setPrefix(cleaned);
         existing.setActive(active);
+        existing.setDescription(carrier == Carrier.MTN ? "MTN Uganda" : "Airtel Uganda");
 
         return repo.save(existing);
     }
