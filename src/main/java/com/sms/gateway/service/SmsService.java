@@ -30,6 +30,10 @@ import java.util.UUID;
 
 import com.sms.gateway.message.OutboundMessage;
 import com.sms.gateway.message.OutboundMessageRepository;
+import com.sms.gateway.security.ApiClientAuthenticationToken;
+import com.sms.gateway.security.ApiClientPrincipal;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * Core application service:
@@ -154,6 +158,14 @@ public class SmsService {
         rec.setRequestId(requestId);
         rec.setPhone(normalized);
         rec.setCarrier(carrier);
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication instanceof ApiClientAuthenticationToken) {
+            Object principal = authentication.getPrincipal();
+            if (principal instanceof ApiClientPrincipal apiClientPrincipal) {
+                rec.setApiClientId(apiClientPrincipal.id());
+                rec.setApiClientName(apiClientPrincipal.username());
+            }
+        }
         rec.setMessage(trimmedText);
         rec.setSenderId(effectiveSender);
         rec.setStatus("QUEUED");
