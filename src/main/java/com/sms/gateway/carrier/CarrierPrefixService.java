@@ -34,10 +34,13 @@ public class CarrierPrefixService {
     }
 
     @Transactional
-    public CarrierPrefix upsert(Carrier carrier, String prefix, boolean active) {
+    public CarrierPrefix create(Carrier carrier, String prefix, boolean active) {
         String cleaned = cleanPrefix(prefix);
-        CarrierPrefix existing = repo.findByCarrierAndPrefix(carrier, cleaned)
-                .orElseGet(() -> new CarrierPrefix(carrier, cleaned, active));
+        if (repo.findByCarrierAndPrefix(carrier, cleaned).isPresent()) {
+            throw new IllegalArgumentException("Prefix already exists for carrier");
+        }
+
+        CarrierPrefix existing = new CarrierPrefix(carrier, cleaned, active);
 
         existing.setCarrier(carrier);
         existing.setPrefix(cleaned);
@@ -45,6 +48,44 @@ public class CarrierPrefixService {
         existing.setDescription(carrier == Carrier.MTN ? "MTN Uganda" : "Airtel Uganda");
 
         return repo.save(existing);
+    }
+
+    @Transactional
+    public CarrierPrefix update(Carrier carrier, String currentPrefix, String newPrefix, Boolean active) {
+        String currentCleaned = cleanPrefix(currentPrefix);
+        CarrierPrefix existing = repo.findByCarrierAndPrefix(carrier, currentCleaned)
+                .orElseThrow(() -> new IllegalArgumentException("Prefix not found for carrier"));
+
+        String targetPrefix = (newPrefix == null || newPrefix.isBlank())
+                ? existing.getPrefix()
+                : cleanPrefix(newPrefix);
+
+        if (!targetPrefix.equals(existing.getPrefix()) && repo.findByCarrierAndPrefix(carrier, targetPrefix).isPresent()) {
+            throw new IllegalArgumentException("Target prefix already exists for carrier");
+        }
+
+        existing.setCarrier(carrier);
+        existing.setPrefix(targetPrefix);
+        if (active != null) {
+            existing.setActive(active);
+        }
+        existing.setDescription(carrier == Carrier.MTN ? "MTN Uganda" : "Airtel Uganda");
+
+        return repo.save(existing);
+    }
+
+    @Transactional
+    public CarrierPrefix upsert(Carrier carrier, String prefix, boolean active) {
+        String cleaned = cleanPrefix(prefix);
+        return repo.findByCarrierAndPrefix(carrier, cleaned)
+                .map(existing -> {
+                    existing.setCarrier(carrier);
+                    existing.setPrefix(cleaned);
+                    existing.setActive(active);
+                    existing.setDescription(carrier == Carrier.MTN ? "MTN Uganda" : "Airtel Uganda");
+                    return repo.save(existing);
+                })
+                .orElseGet(() -> create(carrier, cleaned, active));
     }
 
     @Transactional

@@ -48,9 +48,21 @@ public class CarrierPrefixController {
     }
 
     @PostMapping("/{carrier}")
-    public CarrierPrefix upsert(@PathVariable Carrier carrier, @RequestBody UpsertPrefixRequest req) {
+    public CarrierPrefix create(@PathVariable Carrier carrier, @RequestBody UpsertPrefixRequest req) {
         boolean active = (req.active() == null) || req.active();
-        return service.upsert(carrier, req.prefix(), active);
+        return service.create(carrier, req.prefix(), active);
+    }
+
+    public record UpdatePrefixRequest(String prefix, Boolean active) {
+    }
+
+    @PutMapping("/{carrier}/{prefix}")
+    public CarrierPrefix update(
+            @PathVariable Carrier carrier,
+            @PathVariable String prefix,
+            @RequestBody UpdatePrefixRequest req
+    ) {
+        return service.update(carrier, prefix, req.prefix(), req.active());
     }
 
     @DeleteMapping("/{carrier}/{prefix}")
