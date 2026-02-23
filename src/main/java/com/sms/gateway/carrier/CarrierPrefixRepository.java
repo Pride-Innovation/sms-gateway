@@ -2,11 +2,21 @@ package com.sms.gateway.carrier;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Optional;
 
 public interface CarrierPrefixRepository extends JpaRepository<CarrierPrefix, Long> {
+    Page<CarrierPrefix> findByCarrier(Carrier carrier, Pageable pageable);
+
+    Page<CarrierPrefix> findByCarrierAndActiveTrue(Carrier carrier, Pageable pageable);
+
+    Page<CarrierPrefix> findAllBy(Pageable pageable);
+
+    Page<CarrierPrefix> findByActiveTrue(Pageable pageable);
+
     List<CarrierPrefix> findByCarrierOrderByPrefixAsc(Carrier carrier);
 
     List<CarrierPrefix> findByCarrierAndActiveTrueOrderByPrefixAsc(Carrier carrier);
