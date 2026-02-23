@@ -23,6 +23,12 @@ public class OutboundMessage {
     @Column(nullable = false, length = 20)
     private String phone;
 
+    @Column
+    private Long apiClientId;
+
+    @Column(length = 100)
+    private String apiClientName;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private Carrier carrier;
@@ -47,6 +53,10 @@ public class OutboundMessage {
     public void setRequestId(String requestId) { this.requestId = requestId; }
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
+    public Long getApiClientId() { return apiClientId; }
+    public void setApiClientId(Long apiClientId) { this.apiClientId = apiClientId; }
+    public String getApiClientName() { return apiClientName; }
+    public void setApiClientName(String apiClientName) { this.apiClientName = apiClientName; }
     public Carrier getCarrier() { return carrier; }
     public void setCarrier(Carrier carrier) { this.carrier = carrier; }
     public String getMessage() { return message; }
