@@ -17,6 +17,14 @@ public interface CarrierPrefixRepository extends JpaRepository<CarrierPrefix, Lo
 
     Page<CarrierPrefix> findByActiveTrue(Pageable pageable);
 
+    Page<CarrierPrefix> findByPrefixStartingWith(String prefix, Pageable pageable);
+
+    Page<CarrierPrefix> findByPrefixStartingWithAndActiveTrue(String prefix, Pageable pageable);
+
+    Page<CarrierPrefix> findByCarrierAndPrefixStartingWith(Carrier carrier, String prefix, Pageable pageable);
+
+    Page<CarrierPrefix> findByCarrierAndPrefixStartingWithAndActiveTrue(Carrier carrier, String prefix, Pageable pageable);
+
     List<CarrierPrefix> findByCarrierOrderByPrefixAsc(Carrier carrier);
 
     List<CarrierPrefix> findByCarrierAndActiveTrueOrderByPrefixAsc(Carrier carrier);

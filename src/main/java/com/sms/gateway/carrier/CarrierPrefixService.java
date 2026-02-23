@@ -33,6 +33,18 @@ public class CarrierPrefixService {
                 : repo.findAllBy(pageable);
     }
 
+    public Page<CarrierPrefix> searchByPrefix(String prefix, Carrier carrier, boolean activeOnly, Pageable pageable) {
+        String cleaned = cleanPrefixSearch(prefix);
+        if (carrier != null) {
+            return activeOnly
+                    ? repo.findByCarrierAndPrefixStartingWithAndActiveTrue(carrier, cleaned, pageable)
+                    : repo.findByCarrierAndPrefixStartingWith(carrier, cleaned, pageable);
+        }
+        return activeOnly
+                ? repo.findByPrefixStartingWithAndActiveTrue(cleaned, pageable)
+                : repo.findByPrefixStartingWith(cleaned, pageable);
+    }
+
     @Transactional
     public CarrierPrefix create(Carrier carrier, String prefix, boolean active) {
         String cleaned = cleanPrefix(prefix);
@@ -114,6 +126,18 @@ public class CarrierPrefixService {
 
         if (!digits.startsWith("256") || digits.length() < 5) {
             throw new IllegalArgumentException("prefix must be in UG format (e.g. 076, 031, 020, or 25676)");
+        }
+        return digits;
+    }
+
+    private String cleanPrefixSearch(String prefix) {
+        String digits = (prefix == null) ? "" : prefix.replaceAll("[^0-9]", "");
+        if (digits.isBlank()) throw new IllegalArgumentException("prefix must not be blank");
+        if (digits.length() < 2) throw new IllegalArgumentException("prefix must be at least 2 digits");
+        if (digits.length() > 32) throw new IllegalArgumentException("prefix too long");
+
+        if (!digits.startsWith("256") && digits.startsWith("0") && digits.length() >= 3) {
+            digits = "256" + digits.substring(1);
         }
         return digits;
     }
