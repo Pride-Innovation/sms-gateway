@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Instant;
+
 @Getter
 @Entity
 @Table(
@@ -17,7 +19,6 @@ public class CarrierPrefix {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Setter
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     private Carrier carrier;
@@ -30,6 +31,13 @@ public class CarrierPrefix {
     @Column(nullable = false)
     private boolean active = true;
 
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+
+    @Setter
+    @Column(length = 64)
+    private String description;
+
     protected CarrierPrefix() {
     }
 
@@ -37,6 +45,29 @@ public class CarrierPrefix {
         this.carrier = carrier;
         this.prefix = prefix;
         this.active = active;
+        this.description = descriptionForCarrier(carrier);
+    }
+
+    public void setCarrier(Carrier carrier) {
+        this.carrier = carrier;
+        this.description = descriptionForCarrier(carrier);
+    }
+
+    @PrePersist
+    void prePersist() {
+        if (this.createdAt == null) {
+            this.createdAt = Instant.now();
+        }
+        if (this.description == null || this.description.isBlank()) {
+            this.description = descriptionForCarrier(this.carrier);
+        }
+    }
+
+    private String descriptionForCarrier(Carrier carrier) {
+        return switch (carrier) {
+            case MTN -> "MTN Uganda";
+            case AIRTEL -> "Airtel Uganda";
+        };
     }
 
 }
