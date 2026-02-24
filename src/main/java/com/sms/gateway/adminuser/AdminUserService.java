@@ -6,16 +6,26 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class AdminUserService {
 
+    private static final Logger log = LoggerFactory.getLogger(AdminUserService.class);
+
     private final AdminUserRepository repository;
     private final PasswordEncoder passwordEncoder;
+    private final AdminUserEmailService adminUserEmailService;
 
-    public AdminUserService(AdminUserRepository repository, PasswordEncoder passwordEncoder) {
+    public AdminUserService(
+            AdminUserRepository repository,
+            PasswordEncoder passwordEncoder,
+            AdminUserEmailService adminUserEmailService
+    ) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
+        this.adminUserEmailService = adminUserEmailService;
     }
 
     @Transactional
@@ -47,7 +57,12 @@ public class AdminUserService {
         adminUser.setEnabled(enabled == null || enabled);
 
         try {
-            return repository.save(adminUser);
+            AdminUser saved = repository.save(adminUser);
+            boolean sent = adminUserEmailService.sendWelcomeEmail(saved, rawPassword);
+            if (!sent) {
+                log.warn("Admin user created but welcome email was not sent. userId={} username={}", saved.getId(), saved.getUsername());
+            }
+            return saved;
         } catch (DataIntegrityViolationException ex) {
             throw new IllegalArgumentException("Admin username already exists");
         }
