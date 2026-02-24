@@ -1,6 +1,10 @@
 package com.sms.gateway.adminuser;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.Instant;
 
@@ -8,9 +12,14 @@ import java.time.Instant;
 @Table(
         name = "admin_users",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_admin_users_username", columnNames = "username")
+        @UniqueConstraint(name = "uk_admin_users_username", columnNames = "username"),
+        @UniqueConstraint(name = "uk_admin_users_email", columnNames = "email")
         }
 )
+@NoArgsConstructor
+@AllArgsConstructor
+@Getter
+@Setter
 public class AdminUser {
 
     @Id
@@ -19,6 +28,21 @@ public class AdminUser {
 
     @Column(nullable = false, length = 100)
     private String username;
+
+    @Column(length = 100)
+    private String firstName;
+
+    @Column(length = 100)
+    private String lastName;
+
+    @Column(length = 200)
+    private String email;
+
+    @Column(length = 100)
+    private String title;
+
+    @Column(length = 150)
+    private String department;
 
     @Column(nullable = false, length = 200)
     private String passwordHash;
@@ -42,41 +66,5 @@ public class AdminUser {
     @PreUpdate
     void preUpdate() {
         this.updatedAt = Instant.now();
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public String getPasswordHash() {
-        return passwordHash;
-    }
-
-    public void setPasswordHash(String passwordHash) {
-        this.passwordHash = passwordHash;
-    }
-
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
     }
 }
