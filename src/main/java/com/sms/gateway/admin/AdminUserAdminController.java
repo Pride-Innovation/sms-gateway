@@ -6,11 +6,14 @@ import com.sms.gateway.admin.dto.UpdateAdminUserRequest;
 import com.sms.gateway.adminuser.AdminUser;
 import com.sms.gateway.adminuser.AdminUserService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/admin-users")
@@ -39,8 +42,13 @@ public class AdminUserAdminController {
     }
 
     @GetMapping
-    public List<AdminUserResponse> list() {
-        return service.list().stream().map(this::toResponse).toList();
+    public Page<AdminUserResponse> list(
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "50") int size
+    ) {
+        int safeSize = Math.min(Math.max(size, 1), 500);
+        Pageable pageable = PageRequest.of(Math.max(page, 0), safeSize, Sort.by(Sort.Order.asc("id")));
+        return service.list(pageable).map(this::toResponse);
     }
 
     @GetMapping("/{id}")
