@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
@@ -73,7 +74,8 @@ public class AuthController {
     public record ChangePasswordRequest(@NotBlank String oldPassword, @NotBlank String newPassword) {}
 
     @PostMapping("/change-password")
-    public ResponseEntity<?> changePassword(@RequestBody @Valid ChangePasswordRequest req, Authentication authentication) {
+    public ResponseEntity<?> changePassword(@RequestBody @Valid ChangePasswordRequest req) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         Object principal = authentication == null ? null : authentication.getPrincipal();
         if (!(principal instanceof UserPrincipal userPrincipal)) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
