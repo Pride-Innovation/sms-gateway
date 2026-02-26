@@ -55,6 +55,36 @@ public class AdminUserEmailService {
         }
     }
 
+    public boolean sendPasswordResetEmail(AdminUser adminUser, String resetLink) {
+      if (adminUser.getEmail() == null || adminUser.getEmail().isBlank()) {
+        throw new IllegalArgumentException("Admin email is required to send password reset email");
+      }
+
+      try {
+        MimeMessage message = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+        helper.setFrom(from);
+        helper.setTo(adminUser.getEmail());
+        helper.setSubject("SMS Gateway - Password Reset Request");
+
+        String html = buildResetHtml(adminUser, resetLink);
+        String text = buildResetText(adminUser, resetLink);
+        helper.setText(text, html);
+
+        ClassPathResource logo = new ClassPathResource("static/images/pride_logo_vertical.png");
+        if (logo.exists()) {
+          helper.addInline("prideLogo", logo, "image/png");
+        }
+
+        mailSender.send(message);
+        return true;
+      } catch (Exception e) {
+        log.warn("Failed to send password reset email to {}: {}", adminUser.getEmail(), e.getMessage());
+        return false;
+      }
+    }
+
     private String buildHtml(AdminUser adminUser, String rawPassword) {
         String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
         String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
@@ -121,6 +151,73 @@ public class AdminUserEmailService {
                 This is an automated message from SMS Gateway Application.
                 """.formatted(displayName, adminUser.getUsername(), rawPassword);
           }
+
+    private String buildResetHtml(AdminUser adminUser, String resetLink) {
+        String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
+        String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
+        String escapedLink = escape(resetLink);
+
+        return """
+                <html>
+                <body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+                  <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#f4f6f8;padding:24px 0;">
+                    <tr>
+                      <td align="center">
+                        <table role="presentation" width="680" cellspacing="0" cellpadding="0" style="max-width:680px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+                          <tr>
+                            <td style="background:#0f172a;padding:18px 24px;text-align:center;">
+                              <img src="cid:prideLogo" alt="Pride" style="max-height:54px;display:block;margin:0 auto 10px auto;" />
+                              <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:0.2px;">SMS Gateway Application</div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:26px 28px;">
+                              <p style="margin:0 0 12px 0;font-size:16px;">Hello %s,</p>
+                              <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;">We received a request to reset your SMS Gateway account password.</p>
+
+                              <p style="margin:0 0 18px 0;">
+                                <a href="%s" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-size:14px;font-weight:600;">
+                                  Reset Password
+                                </a>
+                              </p>
+
+                              <p style="margin:0 0 8px 0;font-size:13px;color:#6b7280;">If the button does not work, copy and paste this URL into your browser:</p>
+                              <p style="margin:0 0 0 0;font-size:12px;word-break:break-all;color:#111827;">%s</p>
+
+                              <p style="margin:16px 0 0 0;font-size:13px;line-height:1.6;color:#b91c1c;"><strong>Security Notice:</strong> This link expires shortly and can only be used once.</p>
+                              <p style="margin:12px 0 0 0;font-size:13px;line-height:1.6;color:#4b5563;">If you did not request this reset, you can ignore this email.</p>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:14px 24px;background:#f9fafb;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-align:center;">
+                              This is an automated message from SMS Gateway Application. Please do not reply directly to this email.
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(escape(displayName), escapedLink, escapedLink);
+    }
+
+    private String buildResetText(AdminUser adminUser, String resetLink) {
+        String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
+        String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
+
+        return """
+                Hello %s,
+
+                We received a request to reset your SMS Gateway account password.
+
+                Use this reset link:
+                %s
+
+                Security Notice: This link expires shortly and can only be used once.
+                If you did not request this reset, you can ignore this email.
+                """.formatted(displayName, resetLink);
+    }
 
     private String safe(String value) {
         return value == null ? "" : value.trim();
