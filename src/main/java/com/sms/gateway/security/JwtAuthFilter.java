@@ -27,11 +27,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        // Skip for SMS client endpoints, auth endpoints, and health
+        // Skip for SMS client endpoints, public auth endpoints, and health
         return path.startsWith("/api/sms")
-                || path.startsWith("/api/auth")
+            || isPublicAuthPath(path)
                 || path.startsWith("/actuator/health");
     }
+
+        private boolean isPublicAuthPath(String path) {
+        return "/api/auth/login".equals(path)
+            || "/api/auth/refresh".equals(path)
+            || "/api/auth/forgot-password".equals(path)
+            || "/api/auth/reset-password".equals(path);
+        }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
