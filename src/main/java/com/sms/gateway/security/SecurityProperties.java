@@ -11,6 +11,7 @@ public class SecurityProperties {
     private final Admin admin = new Admin();
     private final Jwt jwt = new Jwt();
     private final Cors cors = new Cors();
+    private final PasswordReset passwordReset = new PasswordReset();
 
     public Admin getAdmin() {
         return admin;
@@ -19,6 +20,8 @@ public class SecurityProperties {
     public Jwt getJwt() { return jwt; }
 
     public Cors getCors() { return cors; }
+
+    public PasswordReset getPasswordReset() { return passwordReset; }
 
     public static class Admin {
         /**
@@ -84,5 +87,15 @@ public class SecurityProperties {
         public void setAllowCredentials(boolean allowCredentials) { this.allowCredentials = allowCredentials; }
         public long getMaxAgeSeconds() { return maxAgeSeconds; }
         public void setMaxAgeSeconds(long maxAgeSeconds) { this.maxAgeSeconds = maxAgeSeconds; }
+    }
+
+    public static class PasswordReset {
+        private String frontendUrl = "http://localhost:3000/reset-password";
+        private long tokenTtlMinutes = 30;
+
+        public String getFrontendUrl() { return frontendUrl; }
+        public void setFrontendUrl(String frontendUrl) { this.frontendUrl = frontendUrl; }
+        public long getTokenTtlMinutes() { return tokenTtlMinutes; }
+        public void setTokenTtlMinutes(long tokenTtlMinutes) { this.tokenTtlMinutes = tokenTtlMinutes; }
     }
 }
