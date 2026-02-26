@@ -56,8 +56,15 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Health endpoints (keep minimal)
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                        // Auth endpoints
-                        .requestMatchers("/api/auth/**").permitAll()
+                        // Public auth endpoints
+                        .requestMatchers(
+                                "/api/auth/login",
+                                "/api/auth/refresh",
+                                "/api/auth/forgot-password",
+                                "/api/auth/reset-password"
+                        ).permitAll()
+                        // Authenticated user password change
+                        .requestMatchers("/api/auth/change-password").hasRole("ADMIN")
                         // SMS APIs require API-client auth (no JWT)
                         .requestMatchers("/api/sms/**").hasRole("API_CLIENT")
                         // Admin APIs require ADMIN role via JWT
