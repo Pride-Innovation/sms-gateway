@@ -43,12 +43,16 @@ public class AdminUserAdminController {
 
     @GetMapping
     public Page<AdminUserResponse> list(
+            @RequestParam(name = "email", required = false) String email,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "50") int size
     ) {
         int safeSize = Math.min(Math.max(size, 1), 500);
         Pageable pageable = PageRequest.of(Math.max(page, 0), safeSize, Sort.by(Sort.Order.asc("id")));
-        return service.list(pageable).map(this::toResponse);
+        if (email == null || email.isBlank()) {
+            return service.list(pageable).map(this::toResponse);
+        }
+        return service.listByEmail(email, pageable).map(this::toResponse);
     }
 
     @GetMapping("/{id}")

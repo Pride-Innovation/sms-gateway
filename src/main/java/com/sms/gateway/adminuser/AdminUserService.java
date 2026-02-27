@@ -84,6 +84,14 @@ public class AdminUserService {
     }
 
     @Transactional(readOnly = true)
+    public Page<AdminUser> listByEmail(String email, Pageable pageable) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("email is required");
+        }
+        return repository.findByEmailContainingIgnoreCase(email.trim(), pageable);
+    }
+
+    @Transactional(readOnly = true)
     public AdminUser get(Long id) {
         return repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Admin user not found"));
