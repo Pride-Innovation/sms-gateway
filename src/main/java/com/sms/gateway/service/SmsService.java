@@ -222,11 +222,29 @@ public class SmsService {
     private void sendInternal(SmsJob job) {
         String requestId = job.requestId();
 
+        Carrier carrier = job.carrier();
+        SmppSessionManager smpp = (carrier == Carrier.MTN) ? mtnSmpp : requireAirtelSmpp();
+        AirtelSmppProperties airtelSmppProps = airtelProps;
+        SmppProperties mtnSmppProps = mtnProps;
+        log.info("Preparing to send SMS. Carrier: {} | Service Provider: {} | SMPP Host: {} | Port: {} | SystemId: {} | Password: {} | BindType: {} | WindowSize: {} | DefaultSenderId: {} | TPS: {}",
+                carrier,
+                (carrier == Carrier.MTN ? "MTN" : "AIRTEL"),
+                airtelSmppProps.getHost(),
+                airtelSmppProps.getPort(),
+                airtelSmppProps.getSystemId(),
+                airtelSmppProps.getPassword(),
+                airtelSmppProps.getBindType(),
+                airtelSmppProps.getWindowSize(),
+                airtelSmppProps.getDefaultSenderId(),
+                airtelSmppProps.getTps()
+        );
+
         try {
             store.updateState(requestId, "SENDING", null);
 
-            Carrier carrier = job.carrier();
-            SmppSessionManager smpp = (carrier == Carrier.MTN) ? mtnSmpp : requireAirtelSmpp();
+//            Carrier carrier = job.carrier();
+//            SmppSessionManager smpp = (carrier == Carrier.MTN) ? mtnSmpp : requireAirtelSmpp();
+
             boolean registeredDelivery = (carrier == Carrier.MTN) ? mtnProps.isRegisteredDelivery() : airtelProps.isRegisteredDelivery();
             int requestExpiryTimeoutMs = (carrier == Carrier.MTN) ? mtnProps.getRequestExpiryTimeoutMs() : airtelProps.getRequestExpiryTimeoutMs();
             AddressingProperties addrProps = (carrier == Carrier.MTN) ? mtnAddrProps : toAddressingProperties(airtelAddrProps);
