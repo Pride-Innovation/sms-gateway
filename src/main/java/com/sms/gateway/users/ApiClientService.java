@@ -8,8 +8,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
+
 @Service
 public class ApiClientService {
+
+    private static final String PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%";
+    private static final int GENERATED_PASSWORD_LENGTH = 20;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final ApiClientRepository repository;
     private final PasswordEncoder passwordEncoder;
@@ -100,10 +106,29 @@ public class ApiClientService {
     }
 
     @Transactional
+    public String regeneratePassword(Long id) {
+        ApiClient client = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("ApiClient not found"));
+        String password = generatePassword();
+        client.setPasswordHash(passwordEncoder.encode(password));
+        repository.save(client);
+        return password;
+    }
+
+    @Transactional
     public void delete(Long id) {
         if (!repository.existsById(id)) {
             throw new IllegalArgumentException("ApiClient not found");
         }
         repository.deleteById(id);
+    }
+
+    private String generatePassword() {
+        StringBuilder password = new StringBuilder(GENERATED_PASSWORD_LENGTH);
+        for (int i = 0; i < GENERATED_PASSWORD_LENGTH; i++) {
+            int index = SECURE_RANDOM.nextInt(PASSWORD_CHARS.length());
+            password.append(PASSWORD_CHARS.charAt(index));
+        }
+        return password.toString();
     }
 }
