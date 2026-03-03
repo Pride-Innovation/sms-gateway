@@ -5,6 +5,7 @@ import com.sms.gateway.users.ApiClient;
 import com.sms.gateway.users.ApiClientRepository;
 import com.sms.gateway.users.ApiClientService;
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -16,6 +17,7 @@ import java.net.URI;
 
 @RestController
 @RequestMapping("/api/admin/api-clients")
+@Slf4j
 public class ApiClientAdminController {
 
     private final ApiClientService apiClientService;

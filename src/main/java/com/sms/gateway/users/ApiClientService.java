@@ -19,10 +19,16 @@ public class ApiClientService {
 
     private final ApiClientRepository repository;
     private final PasswordEncoder passwordEncoder;
+    private final ApiClientEmailService apiClientEmailService;
 
-    public ApiClientService(ApiClientRepository repository, PasswordEncoder passwordEncoder) {
+    public ApiClientService(
+            ApiClientRepository repository,
+            PasswordEncoder passwordEncoder,
+            ApiClientEmailService apiClientEmailService
+    ) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
+        this.apiClientEmailService = apiClientEmailService;
     }
 
     @Transactional
@@ -44,7 +50,9 @@ public class ApiClientService {
         client.setBlocked(false);
 
         try {
-            return repository.save(client);
+            ApiClient savedClient = repository.save(client);
+            apiClientEmailService.sendAccountCreatedEmail(savedClient, rawPassword);
+            return savedClient;
         } catch (DataIntegrityViolationException e) {
             throw new IllegalArgumentException("username already exists");
         }
@@ -111,7 +119,8 @@ public class ApiClientService {
                 .orElseThrow(() -> new IllegalArgumentException("ApiClient not found"));
         String password = generatePassword();
         client.setPasswordHash(passwordEncoder.encode(password));
-        repository.save(client);
+        ApiClient savedClient = repository.save(client);
+        apiClientEmailService.sendPasswordRegeneratedEmail(savedClient, password);
         return password;
     }
 
