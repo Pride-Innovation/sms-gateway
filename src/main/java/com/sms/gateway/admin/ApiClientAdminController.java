@@ -5,12 +5,14 @@ import com.sms.gateway.users.ApiClient;
 import com.sms.gateway.users.ApiClientRepository;
 import com.sms.gateway.users.ApiClientService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/api-clients")
@@ -33,11 +35,20 @@ public class ApiClientAdminController {
     }
 
     @GetMapping
-    public List<ApiClientResponse> list() {
-        return apiClientRepository.findAll(Sort.by(Sort.Direction.ASC, "id"))
-                .stream()
-                .map(this::toResponse)
-                .toList();
+    public Page<ApiClientResponse> list(
+            @RequestParam(name = "username", required = false) String username,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "50") int size
+    ) {
+
+        int safeSize = Math.min(Math.max(size, 1), 500);
+        Pageable pageable = PageRequest.of(Math.max(page, 0), safeSize, Sort.by(Sort.Order.asc("id")));
+
+        if (username == null || username.isBlank()) {
+            return apiClientService.list(pageable).map(this::toResponse);
+        }
+        return apiClientService.listByUsername(username, pageable).map(this::toResponse);
+
     }
 
     @GetMapping("/{id}")
