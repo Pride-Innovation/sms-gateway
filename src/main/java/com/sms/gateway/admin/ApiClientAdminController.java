@@ -73,6 +73,14 @@ public class ApiClientAdminController {
         return toResponse(apiClientService.resetPassword(id, req.getPassword()));
     }
 
+    @PostMapping("/{id}/password/regenerate")
+    public RegeneratedApiClientPasswordResponse regeneratePassword(@PathVariable Long id) {
+        ApiClient client = apiClientRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("ApiClient not found"));
+        String password = apiClientService.regeneratePassword(id);
+        return new RegeneratedApiClientPasswordResponse(client.getId(), client.getUsername(), password);
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
         apiClientService.delete(id);
