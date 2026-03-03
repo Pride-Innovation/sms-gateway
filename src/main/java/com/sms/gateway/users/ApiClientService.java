@@ -1,6 +1,8 @@
 package com.sms.gateway.users;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -52,6 +54,19 @@ public class ApiClientService {
         }
 
         return client;
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ApiClient> list(Pageable pageable) {
+        return repository.findAll(pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ApiClient> listByUsername(String username, Pageable pageable) {
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("username is required");
+        }
+        return repository.findByUsernameContainingIgnoreCase(username.trim(), pageable);
     }
 
     @Transactional
