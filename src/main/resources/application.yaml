@@ -41,13 +41,13 @@ management:
 
 sms:
   smpp:
-    host: ${SMPP_HOST}
-    port: ${SMPP_PORT}
+    host: ${MTN_SMPP_HOST}
+    port: ${MTN_SMPP_PORT}
 
     # DO NOT hardcode production credentials here.
     # Use environment variables/secrets:
-    systemId: ${SMPP_USER_NAME}
-    password: ${SMPP_PASSWORD}
+    systemId: ${MTN_SMPP_SYSTEM_ID}
+    password: ${MTN_SMPP_PASSWORD}
 
     systemType: ""
     bindType: TRANSCEIVER
@@ -63,7 +63,7 @@ sms:
 
     registeredDelivery: true
 
-    defaultSenderId: ${SMPP_SENDER_ID}
+    defaultSenderId: ${MTN_SMPP_SENDER_ID}
     defaultSourceMsisdn: ${SMPP_MSISDN}
 
     # Airtel contract: TPS=20. This should represent total segments/sec per instance.
@@ -77,10 +77,10 @@ sms:
   # Configure via environment variables (for example AIRTEL_SMPP_HOST, AIRTEL_SMPP_PORT, etc).
   airtel:
     smpp:
-      host: ${NEW_AIRTEL_SMPP_HOST:}
-      port: ${NEW_AIRTEL_SMPP_PORT:0}
+      host: ${AIRTEL_SMPP_HOST:}
+      port: ${AIRTEL_SMPP_PORT:0}
       systemId: ${AIRTEL_SMPP_SYSTEM_ID:}
-      password: ${NEW_AIRTEL_SMPP_PASSWORD:}
+      password: ${AIRTEL_SMPP_PASSWORD:}
       systemType: ""
       bindType: TRANSCEIVER
       interfaceVersion: 34
