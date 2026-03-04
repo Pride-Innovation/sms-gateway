@@ -62,7 +62,7 @@ public class ApiClientAdminController {
 
     @PutMapping("/{id}")
     public ApiClientResponse updateDescription(@PathVariable Long id, @RequestBody @Valid UpdateDescriptionRequest req) {
-        return toResponse(apiClientService.updateDescription(id, req.getDescription()));
+        return toResponse(apiClientService.updateDescription(id, req.getDescription(), req.getUsername()));
     }
 
     @PutMapping("/{id}/block")
