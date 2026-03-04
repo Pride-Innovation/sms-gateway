@@ -84,13 +84,17 @@ public class ApiClientService {
     }
 
     @Transactional
-    public ApiClient updateDescription(Long id, String description) {
+    public ApiClient updateDescription(Long id, String description, String username) {
         if (description == null || description.isBlank()) {
+            throw new IllegalArgumentException("description is required");
+        }
+        if (username == null || username.isBlank()) {
             throw new IllegalArgumentException("description is required");
         }
         ApiClient client = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("ApiClient not found"));
         client.setDescription(description.trim());
+        client.setUsername(username.trim());
         return repository.save(client);
     }
 
