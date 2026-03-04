@@ -50,16 +50,25 @@ public interface OutboundMessageRepository extends JpaRepository<OutboundMessage
 
         @Query("""
                         select o from OutboundMessage o
-                        where (:phone is null or o.phone = :phone)
+                                                where (
+                                                                :phonePrimary is null
+                                                                or o.phone like concat('%', :phonePrimary, '%')
+                                                                or (:phoneAltOne is not null and o.phone like concat('%', :phoneAltOne, '%'))
+                                                                or (:phoneAltTwo is not null and o.phone like concat('%', :phoneAltTwo, '%'))
+                                                            )
                             and (:carrier is null or o.carrier = :carrier)
-                            and (:fromTs is null or o.date >= :fromTs)
-                            and (:toTs is null or o.date <= :toTs)
+                            and (:status is null or upper(o.status) = :status)
+                            and (:startDate is null or o.date >= :startDate)
+                            and (:endDate is null or o.date <= :endDate)
                         """)
         Page<OutboundMessage> search(
-                        @Param("phone") String phone,
+                                                @Param("phonePrimary") String phonePrimary,
+                                                @Param("phoneAltOne") String phoneAltOne,
+                                                @Param("phoneAltTwo") String phoneAltTwo,
                         @Param("carrier") Carrier carrier,
-                        @Param("fromTs") java.time.Instant fromTs,
-                        @Param("toTs") java.time.Instant toTs,
+                        @Param("status") String status,
+                        @Param("startDate") java.time.Instant startDate,
+                        @Param("endDate") java.time.Instant endDate,
                         Pageable pageable
         );
 }

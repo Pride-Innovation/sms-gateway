@@ -27,20 +27,38 @@ public class OutboundMessageAdminController {
     public Page<OutboundMessageResponse> list(
             @RequestParam(required = false) String phone,
             @RequestParam(required = false) String carrier,
-            @RequestParam(required = false) String from,
-            @RequestParam(required = false) String to,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size
     ) {
         int safeSize = Math.min(Math.max(size, 1), 500);
         Pageable pageable = PageRequest.of(Math.max(page, 0), safeSize, Sort.by(Sort.Direction.DESC, "date"));
 
-        String phoneFilter = (phone == null || phone.isBlank()) ? null : phone.trim();
+        String[] phoneFilters = buildPhoneFilters(phone);
         Carrier carrierFilter = parseCarrier(carrier);
-        Instant fromTs = (from == null || from.isBlank()) ? null : Instant.parse(from);
-        Instant toTs = (to == null || to.isBlank()) ? null : Instant.parse(to);
+        String statusFilter = parseStatus(status);
+        Instant startTs = parseInstant(startDate, "startDate");
+        Instant endTs = parseInstant(endDate, "endDate");
 
-        return repository.search(phoneFilter, carrierFilter, fromTs, toTs, pageable)
+        if ((startTs == null) != (endTs == null)) {
+            throw new IllegalArgumentException("Both startDate and endDate must be provided together");
+        }
+        if (startTs != null && startTs.isAfter(endTs)) {
+            throw new IllegalArgumentException("startDate must be before or equal to endDate");
+        }
+
+        return repository.search(
+                phoneFilters[0],
+                phoneFilters[1],
+                phoneFilters[2],
+                carrierFilter,
+                statusFilter,
+                startTs,
+                endTs,
+                pageable
+            )
                 .map(this::toResponse);
     }
 
@@ -72,5 +90,52 @@ public class OutboundMessageAdminController {
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Invalid carrier. Use MTN or AIRTEL");
         }
+    }
+
+    private String parseStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return null;
+        }
+        String normalized = status.trim().toUpperCase();
+        if (!"QUEUED".equals(normalized) && !"SENT".equals(normalized) && !"FAILED".equals(normalized)) {
+            throw new IllegalArgumentException("Invalid status. Use QUEUED, SENT or FAILED");
+        }
+        return normalized;
+    }
+
+    private Instant parseInstant(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Instant.parse(value);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(fieldName + " must be an ISO-8601 datetime");
+        }
+    }
+
+    private String[] buildPhoneFilters(String phone) {
+        if (phone == null || phone.isBlank()) {
+            return new String[] {null, null, null};
+        }
+
+        String digits = phone.replaceAll("\\D", "");
+        if (digits.isBlank()) {
+            return new String[] {null, null, null};
+        }
+
+        String altOne = null;
+        String altTwo = null;
+
+        if (digits.startsWith("256") && digits.length() > 3) {
+            altOne = "0" + digits.substring(3);
+        } else if (digits.startsWith("0") && digits.length() > 1) {
+            altOne = "256" + digits.substring(1);
+        } else {
+            altOne = "0" + digits;
+            altTwo = "256" + digits;
+        }
+
+        return new String[] {digits, altOne, altTwo};
     }
 }
