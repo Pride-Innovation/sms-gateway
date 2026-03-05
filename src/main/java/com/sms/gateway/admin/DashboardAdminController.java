@@ -34,15 +34,13 @@ public class DashboardAdminController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant endDate
     ) {
-        if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
-            throw new ResponseStatusException(BAD_REQUEST, "startDate must be before or equal to endDate");
-        }
+        boolean applyDateRange = shouldApplyDateRange(startDate, endDate);
 
         Map<Carrier, Stats> statsByCarrier = new LinkedHashMap<>();
         statsByCarrier.put(Carrier.MTN, new Stats());
         statsByCarrier.put(Carrier.AIRTEL, new Stats());
 
-        List<OutboundMessageRepository.CarrierStatsRow> carrierStats = (startDate == null || endDate == null)
+        List<OutboundMessageRepository.CarrierStatsRow> carrierStats = !applyDateRange
                 ? outboundMessageRepository.summarizeByCarrier()
                 : outboundMessageRepository.summarizeByCarrierInDateRange(startDate, endDate);
 
@@ -62,10 +60,18 @@ public class DashboardAdminController {
     }
 
     @GetMapping("/client-totals")
-    public List<DashboardClientTotalsResponse> clientTotals() {
+    public List<DashboardClientTotalsResponse> clientTotals(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant endDate
+    ) {
+        boolean applyDateRange = shouldApplyDateRange(startDate, endDate);
         Map<Long, ClientStats> byClient = new LinkedHashMap<>();
 
-        for (OutboundMessageRepository.ClientCarrierStatsRow row : outboundMessageRepository.summarizeByClientAndCarrier()) {
+        List<OutboundMessageRepository.ClientCarrierStatsRow> clientCarrierStats = !applyDateRange
+                ? outboundMessageRepository.summarizeByClientAndCarrier()
+                : outboundMessageRepository.summarizeByClientAndCarrierInDateRange(startDate, endDate);
+
+        for (OutboundMessageRepository.ClientCarrierStatsRow row : clientCarrierStats) {
             ClientStats clientStats = byClient.computeIfAbsent(row.getClientId(), id -> new ClientStats(row.getClientId(), row.getClientName()));
             if (row.getCarrier() == Carrier.MTN) {
                 clientStats.mtnFailed = defaultZero(row.getFailed());
@@ -90,6 +96,13 @@ public class DashboardAdminController {
 
     private long defaultZero(Long v) {
         return v == null ? 0L : v;
+    }
+
+    private boolean shouldApplyDateRange(Instant startDate, Instant endDate) {
+        if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
+            throw new ResponseStatusException(BAD_REQUEST, "startDate must be before or equal to endDate");
+        }
+        return startDate != null && endDate != null;
     }
 
     private static class Stats {
