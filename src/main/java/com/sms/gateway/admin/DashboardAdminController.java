@@ -4,14 +4,20 @@ import com.sms.gateway.admin.dto.DashboardCarrierTotalsResponse;
 import com.sms.gateway.admin.dto.DashboardClientTotalsResponse;
 import com.sms.gateway.carrier.Carrier;
 import com.sms.gateway.message.OutboundMessageRepository;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
 
 @RestController
 @RequestMapping("/api/admin/dashboard")
@@ -24,12 +30,23 @@ public class DashboardAdminController {
     }
 
     @GetMapping("/carrier-totals")
-    public DashboardCarrierTotalsResponse carrierTotals() {
+    public DashboardCarrierTotalsResponse carrierTotals(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant endDate
+    ) {
+        if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
+            throw new ResponseStatusException(BAD_REQUEST, "startDate must be before or equal to endDate");
+        }
+
         Map<Carrier, Stats> statsByCarrier = new LinkedHashMap<>();
         statsByCarrier.put(Carrier.MTN, new Stats());
         statsByCarrier.put(Carrier.AIRTEL, new Stats());
 
-        for (OutboundMessageRepository.CarrierStatsRow row : outboundMessageRepository.summarizeByCarrier()) {
+        List<OutboundMessageRepository.CarrierStatsRow> carrierStats = (startDate == null || endDate == null)
+                ? outboundMessageRepository.summarizeByCarrier()
+                : outboundMessageRepository.summarizeByCarrierInDateRange(startDate, endDate);
+
+        for (OutboundMessageRepository.CarrierStatsRow row : carrierStats) {
             Stats s = statsByCarrier.computeIfAbsent(row.getCarrier(), key -> new Stats());
             s.successfull = defaultZero(row.getSuccessfull());
             s.failed = defaultZero(row.getFailed());
