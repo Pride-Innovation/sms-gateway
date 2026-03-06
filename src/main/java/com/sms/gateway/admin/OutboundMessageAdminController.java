@@ -26,6 +26,7 @@ public class OutboundMessageAdminController {
     @GetMapping("/outbound-messages")
     public Page<OutboundMessageResponse> list(
             @RequestParam(required = false) String phone,
+            @RequestParam(required = false, name = "apiClient") String apiClient,
             @RequestParam(required = false) String carrier,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String startDate,
@@ -37,6 +38,8 @@ public class OutboundMessageAdminController {
         Pageable pageable = PageRequest.of(Math.max(page, 0), safeSize, Sort.by(Sort.Direction.DESC, "date"));
 
         String[] phoneFilters = buildPhoneFilters(phone);
+        Long apiClientId = parseApiClientId(apiClient);
+        String apiClientName = parseApiClientName(apiClient);
         Carrier carrierFilter = parseCarrier(carrier);
         String statusFilter = parseStatus(status);
         Instant startTs = parseInstant(startDate, "startDate");
@@ -50,15 +53,17 @@ public class OutboundMessageAdminController {
         }
 
         return repository.search(
-                phoneFilters[0],
-                phoneFilters[1],
-                phoneFilters[2],
-                carrierFilter,
-                statusFilter,
-                startTs,
-                endTs,
-                pageable
-            )
+                        phoneFilters[0],
+                        phoneFilters[1],
+                        phoneFilters[2],
+                        apiClientId,
+                        apiClientName,
+                        carrierFilter,
+                        statusFilter,
+                        startTs,
+                        endTs,
+                        pageable
+                )
                 .map(this::toResponse);
     }
 
@@ -73,12 +78,37 @@ public class OutboundMessageAdminController {
         return new OutboundMessageResponse(
                 m.getRequestId(),
                 m.getPhone(),
+                m.getApiClientId(),
+                m.getApiClientName(),
                 m.getCarrier(),
                 m.getMessage(),
                 m.getSenderId(),
                 m.getStatus(),
                 m.getDate()
         );
+    }
+
+    private Long parseApiClientId(String apiClient) {
+        if (apiClient == null || apiClient.isBlank()) {
+            return null;
+        }
+        String value = apiClient.trim();
+        if (!value.chars().allMatch(Character::isDigit)) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid apiClient. Use a valid numeric id or client name");
+        }
+    }
+
+    private String parseApiClientName(String apiClient) {
+        if (apiClient == null || apiClient.isBlank()) {
+            return null;
+        }
+        String value = apiClient.trim();
+        return value.chars().allMatch(Character::isDigit) ? null : value;
     }
 
     private Carrier parseCarrier(String carrier) {
@@ -116,12 +146,12 @@ public class OutboundMessageAdminController {
 
     private String[] buildPhoneFilters(String phone) {
         if (phone == null || phone.isBlank()) {
-            return new String[] {null, null, null};
+            return new String[]{null, null, null};
         }
 
         String digits = phone.replaceAll("\\D", "");
         if (digits.isBlank()) {
-            return new String[] {null, null, null};
+            return new String[]{null, null, null};
         }
 
         String altOne = null;
@@ -136,6 +166,6 @@ public class OutboundMessageAdminController {
             altTwo = "256" + digits;
         }
 
-        return new String[] {digits, altOne, altTwo};
+        return new String[]{digits, altOne, altTwo};
     }
 }
