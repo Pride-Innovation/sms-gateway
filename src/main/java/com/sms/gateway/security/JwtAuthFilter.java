@@ -35,6 +35,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         private boolean isPublicAuthPath(String path) {
         return "/api/auth/login".equals(path)
+                || "/api/auth/login/verify-otp".equals(path)
             || "/api/auth/refresh".equals(path)
             || "/api/auth/forgot-password".equals(path)
             || "/api/auth/reset-password".equals(path);
