@@ -17,6 +17,8 @@ spring:
       hibernate.jdbc.batch_size: 50
       hibernate.order_inserts: true
       hibernate.order_updates: true
+      org.hibernate.envers.store_data_at_delete: true
+      org.hibernate.envers.global_with_modified_flag: true
   mail:
     host: ${EMAIL_HOST}
     port: ${EMAIL_PORT}

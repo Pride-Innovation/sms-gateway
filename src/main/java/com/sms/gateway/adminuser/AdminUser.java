@@ -5,10 +5,13 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.envers.Audited;
+import org.hibernate.envers.NotAudited;
 
 import java.time.Instant;
 
 @Entity
+@Audited
 @Table(
         name = "admin_users",
         uniqueConstraints = {
@@ -45,6 +48,7 @@ public class AdminUser {
     private String department;
 
     @Column(nullable = false, length = 200)
+    @NotAudited
     private String passwordHash;
 
     @Column(nullable = false)

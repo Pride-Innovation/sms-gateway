@@ -3,11 +3,13 @@ package com.sms.gateway.carrier;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.envers.Audited;
 
 import java.time.Instant;
 
 @Getter
 @Entity
+@Audited
 @Table(
         name = "carrier_prefixes",
         uniqueConstraints = {

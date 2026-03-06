@@ -3,11 +3,14 @@ package com.sms.gateway.users;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.envers.Audited;
+import org.hibernate.envers.NotAudited;
 
 import java.time.Instant;
 
 @Getter
 @Entity
+@Audited
 @Table(
         name = "api_clients",
         uniqueConstraints = {
@@ -26,6 +29,7 @@ public class ApiClient {
 
     @Setter
     @Column(nullable = false, length = 200)
+    @NotAudited
     private String passwordHash;
 
     @Setter

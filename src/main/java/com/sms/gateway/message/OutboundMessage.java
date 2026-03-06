@@ -3,14 +3,20 @@ package com.sms.gateway.message;
 import com.sms.gateway.carrier.Carrier;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Size;
+import lombok.Getter;
+import lombok.Setter;
+import org.hibernate.envers.Audited;
 
 import java.time.Instant;
 
+@Getter
 @Entity
+@Setter
+@Audited
 @Table(name = "outbound_messages", indexes = {
         @Index(name = "idx_outbound_messages_request_id", columnList = "requestId", unique = true),
-    @Index(name = "idx_outbound_messages_phone", columnList = "phone"),
-    @Index(name = "idx_outbound_messages_carrier", columnList = "carrier")
+        @Index(name = "idx_outbound_messages_phone", columnList = "phone"),
+        @Index(name = "idx_outbound_messages_carrier", columnList = "carrier")
 })
 public class OutboundMessage {
     @Id
@@ -48,23 +54,4 @@ public class OutboundMessage {
     @Column(name = "date")
     private Instant date;
 
-    public Long getId() { return id; }
-    public String getRequestId() { return requestId; }
-    public void setRequestId(String requestId) { this.requestId = requestId; }
-    public String getPhone() { return phone; }
-    public void setPhone(String phone) { this.phone = phone; }
-    public Long getApiClientId() { return apiClientId; }
-    public void setApiClientId(Long apiClientId) { this.apiClientId = apiClientId; }
-    public String getApiClientName() { return apiClientName; }
-    public void setApiClientName(String apiClientName) { this.apiClientName = apiClientName; }
-    public Carrier getCarrier() { return carrier; }
-    public void setCarrier(Carrier carrier) { this.carrier = carrier; }
-    public String getMessage() { return message; }
-    public void setMessage(String message) { this.message = message; }
-    public String getSenderId() { return senderId; }
-    public void setSenderId(String senderId) { this.senderId = senderId; }
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
-    public Instant getDate() { return date; }
-    public void setDate(Instant date) { this.date = date; }
 }

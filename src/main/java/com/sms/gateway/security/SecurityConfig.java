@@ -1,6 +1,7 @@
 package com.sms.gateway.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sms.gateway.audit.AuditRequestContextFilter;
 import com.sms.gateway.users.ApiClientService;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -44,6 +45,7 @@ public class SecurityConfig {
         ApiClientAuthFilter apiClientAuthFilter = new ApiClientAuthFilter(apiClientService);
         JwtAuthFilter jwtAuthFilter = new JwtAuthFilter(jwtTokenService);
         HttpMethodOverrideHeaderFilter methodOverrideHeaderFilter = new HttpMethodOverrideHeaderFilter();
+        AuditRequestContextFilter auditRequestContextFilter = new AuditRequestContextFilter();
 
         http
                 .cors(Customizer.withDefaults())
@@ -77,6 +79,8 @@ public class SecurityConfig {
                         // Everything else requires authentication
                         .anyRequest().authenticated()
                 )
+                        // Capture request metadata once so DB revisions can include request context.
+                        .addFilterBefore(auditRequestContextFilter, UsernamePasswordAuthenticationFilter.class)
                 // Allow POST method tunneling (X-HTTP-Method-Override) for selected API paths.
                 .addFilterBefore(methodOverrideHeaderFilter, UsernamePasswordAuthenticationFilter.class)
                 // Ensure API client auth runs for /api/sms/** before authorization
