@@ -12,6 +12,7 @@ public class SecurityProperties {
     private final Jwt jwt = new Jwt();
     private final Cors cors = new Cors();
     private final PasswordReset passwordReset = new PasswordReset();
+    private final LoginOtp loginOtp = new LoginOtp();
 
     public Admin getAdmin() {
         return admin;
@@ -22,6 +23,8 @@ public class SecurityProperties {
     public Cors getCors() { return cors; }
 
     public PasswordReset getPasswordReset() { return passwordReset; }
+
+    public LoginOtp getLoginOtp() { return loginOtp; }
 
     public static class Admin {
         /**
@@ -97,5 +100,26 @@ public class SecurityProperties {
         public void setFrontendUrl(String frontendUrl) { this.frontendUrl = frontendUrl; }
         public long getTokenTtlMinutes() { return tokenTtlMinutes; }
         public void setTokenTtlMinutes(long tokenTtlMinutes) { this.tokenTtlMinutes = tokenTtlMinutes; }
+    }
+
+    public static class LoginOtp {
+        private int ttlMinutes = 5;
+        private int maxAttempts = 5;
+
+        public int getTtlMinutes() {
+            return ttlMinutes;
+        }
+
+        public void setTtlMinutes(int ttlMinutes) {
+            this.ttlMinutes = ttlMinutes;
+        }
+
+        public int getMaxAttempts() {
+            return maxAttempts;
+        }
+
+        public void setMaxAttempts(int maxAttempts) {
+            this.maxAttempts = maxAttempts;
+        }
     }
 }
