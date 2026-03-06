@@ -63,6 +63,7 @@ public class SecurityConfig {
                         // Public auth endpoints
                         .requestMatchers(
                                 "/api/auth/login",
+                                "/api/auth/login/verify-otp",
                                 "/api/auth/refresh",
                                 "/api/auth/forgot-password",
                                 "/api/auth/reset-password"
