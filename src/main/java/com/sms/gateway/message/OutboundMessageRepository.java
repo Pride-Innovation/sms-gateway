@@ -94,6 +94,11 @@ public interface OutboundMessageRepository extends JpaRepository<OutboundMessage
                                                     or (:phoneAltOne is not null and o.phone like concat('%', :phoneAltOne, '%'))
                                                     or (:phoneAltTwo is not null and o.phone like concat('%', :phoneAltTwo, '%'))
                                                 )
+                                and (
+                                                (:apiClientId is null and :apiClientName is null)
+                                                or (:apiClientId is not null and o.apiClientId = :apiClientId)
+                                                or (:apiClientName is not null and lower(coalesce(o.apiClientName, '')) like concat('%', lower(:apiClientName), '%'))
+                                        )
                 and (:carrier is null or o.carrier = :carrier)
                 and (:status is null or upper(o.status) = :status)
                 and (:startDate is null or o.date >= :startDate)
@@ -103,6 +108,8 @@ public interface OutboundMessageRepository extends JpaRepository<OutboundMessage
             @Param("phonePrimary") String phonePrimary,
             @Param("phoneAltOne") String phoneAltOne,
             @Param("phoneAltTwo") String phoneAltTwo,
+            @Param("apiClientId") Long apiClientId,
+            @Param("apiClientName") String apiClientName,
             @Param("carrier") Carrier carrier,
             @Param("status") String status,
             @Param("startDate") java.time.Instant startDate,
