@@ -1,6 +1,7 @@
 package com.sms.gateway.api;
 
 import com.sms.gateway.adminuser.AdminUser;
+import com.sms.gateway.adminuser.AdminUserLoginOtpService;
 import com.sms.gateway.adminuser.AdminUserRepository;
 import com.sms.gateway.adminuser.AdminUserService;
 import com.sms.gateway.security.JwtTokenService;
@@ -10,7 +11,6 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -20,30 +20,52 @@ import java.util.Map;
 public class AuthController {
 
     private final AdminUserRepository adminUserRepository;
-    private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final AdminUserService adminUserService;
+    private final AdminUserLoginOtpService adminUserLoginOtpService;
 
     public AuthController(AdminUserRepository adminUserRepository,
-                          PasswordEncoder passwordEncoder,
                           JwtTokenService jwtTokenService,
-                          AdminUserService adminUserService) {
+                          AdminUserService adminUserService,
+                          AdminUserLoginOtpService adminUserLoginOtpService) {
         this.adminUserRepository = adminUserRepository;
-        this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.adminUserService = adminUserService;
+        this.adminUserLoginOtpService = adminUserLoginOtpService;
     }
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
 
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest req) {
-        AdminUser user = adminUserRepository.findByUsernameIgnoreCase(req.username())
-                .orElse(null);
-        if (user == null || !user.isEnabled() || !passwordEncoder.matches(req.password(), user.getPasswordHash())) {
+        boolean initiated = adminUserLoginOtpService.initiateOtpLogin(req.username(), req.password());
+        if (!initiated) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
         }
 
+        return ResponseEntity.ok(Map.of(
+                "message", "OTP sent to your email",
+                "otpRequired", true,
+            "otpTtlMinutes", adminUserLoginOtpService.getOtpTtlMinutes()
+        ));
+    }
+
+    public record VerifyLoginOtpRequest(@NotBlank String username, @NotBlank String otp) {}
+
+    @PostMapping("/login/verify-otp")
+    public ResponseEntity<?> verifyLoginOtp(@RequestBody @Valid VerifyLoginOtpRequest req) {
+        var verification = adminUserLoginOtpService.verifyOtpAndGetUser(req.username(), req.otp());
+        if (verification.status() == AdminUserLoginOtpService.Status.INVALID) {
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid OTP"));
+        }
+        if (verification.status() == AdminUserLoginOtpService.Status.EXPIRED) {
+            return ResponseEntity.status(401).body(Map.of("error", "OTP expired"));
+        }
+        if (verification.status() == AdminUserLoginOtpService.Status.TOO_MANY_ATTEMPTS) {
+            return ResponseEntity.status(429).body(Map.of("error", "Too many OTP attempts"));
+        }
+
+        AdminUser user = verification.user();
         String access = jwtTokenService.createAccessToken(user.getUsername(), java.util.List.of("ADMIN"));
         String refresh = jwtTokenService.createRefreshToken(user.getUsername());
         return ResponseEntity.ok(Map.of("accessToken", access, "refreshToken", refresh));
