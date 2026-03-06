@@ -19,6 +19,9 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Set;
 
 @Configuration
 @EnableMethodSecurity
@@ -40,6 +43,7 @@ public class SecurityConfig {
 
         ApiClientAuthFilter apiClientAuthFilter = new ApiClientAuthFilter(apiClientService);
         JwtAuthFilter jwtAuthFilter = new JwtAuthFilter(jwtTokenService);
+        HttpMethodOverrideHeaderFilter methodOverrideHeaderFilter = new HttpMethodOverrideHeaderFilter();
 
         http
                 .cors(Customizer.withDefaults())
@@ -72,6 +76,8 @@ public class SecurityConfig {
                         // Everything else requires authentication
                         .anyRequest().authenticated()
                 )
+                // Allow POST method tunneling (X-HTTP-Method-Override) for selected API paths.
+                .addFilterBefore(methodOverrideHeaderFilter, UsernamePasswordAuthenticationFilter.class)
                 // Ensure API client auth runs for /api/sms/** before authorization
                 .addFilterBefore(apiClientAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 // JWT auth for the rest
@@ -80,19 +86,31 @@ public class SecurityConfig {
         return http.build();
     }
 
-        @Bean
-        public CorsConfigurationSource corsConfigurationSource(SecurityProperties securityProperties) {
-                SecurityProperties.Cors c = securityProperties.getCors();
-                CorsConfiguration cfg = new CorsConfiguration();
-                cfg.setAllowedOrigins(new ArrayList<>(c.getAllowedOrigins()));
-                cfg.setAllowedMethods(new ArrayList<>(c.getAllowedMethods()));
-                cfg.setAllowedHeaders(new ArrayList<>(c.getAllowedHeaders()));
-                cfg.setExposedHeaders(new ArrayList<>(c.getExposedHeaders()));
-                cfg.setAllowCredentials(c.isAllowCredentials());
-                cfg.setMaxAge(c.getMaxAgeSeconds());
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource(SecurityProperties securityProperties) {
+        SecurityProperties.Cors c = securityProperties.getCors();
+        CorsConfiguration cfg = new CorsConfiguration();
+        cfg.setAllowedOrigins(new ArrayList<>(c.getAllowedOrigins()));
 
-                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-                source.registerCorsConfiguration("/**", cfg);
-                return source;
+        Set<String> allowedMethods = new LinkedHashSet<>(c.getAllowedMethods());
+        allowedMethods.add("OPTIONS");
+        cfg.setAllowedMethods(new ArrayList<>(allowedMethods));
+
+        Set<String> allowedHeaders = new LinkedHashSet<>(c.getAllowedHeaders());
+        // Keep method tunneling functional even when env provides an explicit CORS header list.
+        if (allowedHeaders.stream().noneMatch("*"::equals)) {
+            allowedHeaders.add("Authorization");
+            allowedHeaders.add("Content-Type");
+            allowedHeaders.add(HttpMethodOverrideHeaderFilter.METHOD_OVERRIDE_HEADER);
+            allowedHeaders.add(HttpMethodOverrideHeaderFilter.METHOD_OVERRIDE_HEADER.toLowerCase(Locale.ROOT));
         }
+        cfg.setAllowedHeaders(new ArrayList<>(allowedHeaders));
+        cfg.setExposedHeaders(new ArrayList<>(c.getExposedHeaders()));
+        cfg.setAllowCredentials(c.isAllowCredentials());
+        cfg.setMaxAge(c.getMaxAgeSeconds());
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", cfg);
+        return source;
+    }
 }
