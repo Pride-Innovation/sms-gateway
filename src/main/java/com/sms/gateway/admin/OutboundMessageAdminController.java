@@ -83,7 +83,12 @@ public class OutboundMessageAdminController {
                 m.getCarrier(),
                 m.getMessage(),
                 m.getSenderId(),
+                m.getMessageType(),
                 m.getStatus(),
+                m.getAttemptCount(),
+                m.getExpiresAt(),
+                m.getNextAttemptAt(),
+                m.getLastError(),
                 m.getDate()
         );
     }
@@ -127,8 +132,13 @@ public class OutboundMessageAdminController {
             return null;
         }
         String normalized = status.trim().toUpperCase();
-        if (!"QUEUED".equals(normalized) && !"SENT".equals(normalized) && !"FAILED".equals(normalized)) {
-            throw new IllegalArgumentException("Invalid status. Use QUEUED, SENT or FAILED");
+        if (!"QUEUED".equals(normalized)
+                && !"PROCESSING".equals(normalized)
+                && !"RETRY".equals(normalized)
+                && !"SENT".equals(normalized)
+                && !"FAILED".equals(normalized)
+                && !"EXPIRED".equals(normalized)) {
+            throw new IllegalArgumentException("Invalid status. Use QUEUED, PROCESSING, RETRY, SENT, FAILED or EXPIRED");
         }
         return normalized;
     }
