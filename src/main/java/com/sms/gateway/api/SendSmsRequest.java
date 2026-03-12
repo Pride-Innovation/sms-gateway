@@ -1,5 +1,7 @@
 package com.sms.gateway.api;
 
+import com.sms.gateway.message.MessageType;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -18,4 +20,9 @@ public class SendSmsRequest {
 
     @Size(max = 200)
     private String idempotencyKey;
+
+    private MessageType messageType;
+
+    @Min(1)
+    private Integer ttlSeconds;
 }
