@@ -22,12 +22,14 @@ public class SmsController {
                 req.getTo(),
                 req.getText(),
                 req.getSenderId(),
-                req.getIdempotencyKey()
+                req.getIdempotencyKey(),
+                req.getMessageType(),
+                req.getTtlSeconds()
         );
         return ResponseEntity.accepted().body(new SendSmsResponse(requestId, "QUEUED"));
     }
 
-    // Optional: lightweight status endpoint (in-memory store in this example)
+    // Request status is persisted in MySQL-backed SmsStore.
     @GetMapping("/{requestId}")
     public ResponseEntity<?> status(@PathVariable String requestId) {
         return ResponseEntity.ok(smsService.getStatus(requestId));
