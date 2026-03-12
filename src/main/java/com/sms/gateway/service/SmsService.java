@@ -12,21 +12,34 @@ import com.sms.gateway.config.AirtelAddressingProperties;
 import com.sms.gateway.config.AirtelSmppProperties;
 import com.sms.gateway.config.SmsGatewayProperties;
 import com.sms.gateway.config.SmppProperties;
+import com.sms.gateway.message.MessageType;
 import com.sms.gateway.smpp.SmppSessionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.sms.gateway.message.OutboundMessage;
 import com.sms.gateway.message.OutboundMessageRepository;
@@ -39,16 +52,22 @@ import org.springframework.security.core.context.SecurityContextHolder;
  * Core application service:
  * - Validates and normalizes requests
  * - Applies idempotency
- * - Enqueues work
- * - Worker threads perform SMPP submits and update the store
+ * - Persists work durably in MySQL
+ * - Carrier-specific workers drain the queue and update the store
  * <p>
  * Production notes:
- * - For multi-instance scalability: SmsStore must be shared (Redis/DB), dispatcher should be durable (broker).
+ * - For multi-instance scalability: SmsStore and queue records must be shared (DB/broker).
  * - RateLimiter is per-instance; if you run multiple pods, aggregate TPS can exceed your contract.
  */
 @Service
 public class SmsService {
     private static final Logger log = LoggerFactory.getLogger(SmsService.class);
+    private static final String STATUS_QUEUED = "QUEUED";
+    private static final String STATUS_PROCESSING = "PROCESSING";
+    private static final String STATUS_RETRY = "RETRY";
+    private static final String STATUS_SENT = "SENT";
+    private static final String STATUS_FAILED = "FAILED";
+    private static final String STATUS_EXPIRED = "EXPIRED";
 
     private final SmppSessionManager mtnSmpp;
     private final SmppSessionManager airtelSmpp;
@@ -66,8 +85,12 @@ public class SmsService {
     private final RateLimiter mtnLimiter;
     private final RateLimiter airtelLimiter;
     private final SmsStore store;
-    private final SmsDispatcher dispatcher;
     private final OutboundMessageRepository outboundMessageRepository;
+    private final TransactionTemplate transactionTemplate;
+    private final ExecutorService mtnWorker = Executors.newSingleThreadExecutor(namedThreadFactory("sms-queue-mtn"));
+    private final ExecutorService airtelWorker = Executors.newSingleThreadExecutor(namedThreadFactory("sms-queue-airtel"));
+    private final ScheduledExecutorService maintenanceWorker = Executors.newSingleThreadScheduledExecutor(namedThreadFactory("sms-queue-maint"));
+    private final AtomicBoolean running = new AtomicBoolean(true);
 
     public SmsService(
             @Qualifier("mtnSmppSessionManager") SmppSessionManager mtnSmpp,
@@ -79,7 +102,8 @@ public class SmsService {
             SmsGatewayProperties gwProps,
             CarrierRouter carrierRouter,
             OutboundMessageRepository outboundMessageRepository,
-            SmsStore store
+            SmsStore store,
+            PlatformTransactionManager transactionManager
     ) {
         this.mtnSmpp = mtnSmpp;
         this.airtelSmpp = airtelSmppProvider.getIfAvailable();
@@ -95,32 +119,45 @@ public class SmsService {
         this.mtnLimiter = RateLimiter.create(Math.max(1, mtnProps.getTps()));
         this.airtelLimiter = RateLimiter.create(Math.max(1, airtelProps.getTps()));
 
-        // SmsStore is now injected (MySQL-backed for robustness)
         this.store = store;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
 
-        // Bounded async queue; for production durability replace with broker.
-        this.dispatcher = new SmsDispatcher(
-                gwProps.getQueueCapacity(),
-                gwProps.getWorkerThreads(),
-                "sms-worker",
-                this::sendInternal
+    @PostConstruct
+    public void startWorkers() {
+        log.info("Starting durable SMS queue workers mtnTps={} airtelTps={} otpDefaultTtlSeconds={} maxRetryAttempts={}",
+                mtnProps.getTps(), airtelProps.getTps(), gwProps.getOtpDefaultTtlSeconds(), gwProps.getMaxRetryAttempts());
+
+        mtnWorker.submit(() -> runCarrierWorker(Carrier.MTN, "sms-queue-mtn"));
+        airtelWorker.submit(() -> runCarrierWorker(Carrier.AIRTEL, "sms-queue-airtel"));
+        maintenanceWorker.scheduleWithFixedDelay(
+                this::recoverStaleMessages,
+                gwProps.getRecoveryIntervalSeconds(),
+                gwProps.getRecoveryIntervalSeconds(),
+                TimeUnit.SECONDS
         );
     }
 
     @PreDestroy
     public void shutdown() {
-        // Ensure worker pool stops cleanly on app shutdown.
-        dispatcher.close();
+        running.set(false);
+        mtnWorker.shutdownNow();
+        airtelWorker.shutdownNow();
+        maintenanceWorker.shutdownNow();
     }
 
+    @Transactional
     public String enqueue(
             String toMsisdn,
             String text,
             String senderId,
-            String idempotencyKey
+            String idempotencyKey,
+            MessageType messageType,
+            Integer ttlSeconds
     ) {
         String normalized = normalizeMsisdn(toMsisdn);
         Carrier carrier = carrierRouter.resolveOrThrow(normalized);
+        MessageType effectiveType = (messageType == null) ? MessageType.NOTIFICATION : messageType;
 
         if (carrier == Carrier.AIRTEL && airtelSmpp == null) {
             throw new IllegalArgumentException(
@@ -149,15 +186,17 @@ public class SmsService {
             if (existing != null) return existing;
         }
 
+        Instant now = Instant.now();
+        Instant expiresAt = resolveExpiry(effectiveType, ttlSeconds, now);
         String requestId = UUID.randomUUID().toString();
-        SmsStatus status = new SmsStatus(requestId, normalized, effectiveSender, Instant.now(), "QUEUED", null);
+        SmsStatus status = new SmsStatus(requestId, normalized, effectiveSender, now, STATUS_QUEUED, null);
         store.put(status, stableKey);
 
-        // Persist initial record (date null while queued)
         OutboundMessage rec = new OutboundMessage();
         rec.setRequestId(requestId);
         rec.setPhone(normalized);
         rec.setCarrier(carrier);
+        rec.setMessageType(effectiveType);
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication instanceof ApiClientAuthenticationToken) {
             Object principal = authentication.getPrincipal();
@@ -168,21 +207,20 @@ public class SmsService {
         }
         rec.setMessage(trimmedText);
         rec.setSenderId(effectiveSender);
-        rec.setStatus("QUEUED");
+        rec.setStatus(STATUS_QUEUED);
+        rec.setPriority(resolvePriority(effectiveType));
+        rec.setAttemptCount(0);
+        rec.setSegmentCount(null);
+        rec.setExpiresAt(expiresAt);
+        rec.setNextAttemptAt(now);
+        rec.setLockedAt(null);
+        rec.setLockedBy(null);
+        rec.setLastError(null);
         rec.setDate(null);
         outboundMessageRepository.save(rec);
 
-        boolean accepted = dispatcher.tryEnqueue(new SmsJob(requestId, normalized, trimmedText, effectiveSender, carrier));
-        if (!accepted) {
-            store.updateState(requestId, "REJECTED", "Queue full");
-            // Persist REJECTED in outbound_messages with timestamp for auditing
-            outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
-                m.setStatus("REJECTED");
-                m.setDate(Instant.now());
-                outboundMessageRepository.save(m);
-            });
-            throw new TooManyRequestsException("SMS queue full, try later");
-        }
+        log.info("Queued SMS requestId={} carrier={} type={} priority={} expiresAt={} requester={}",
+                requestId, carrier, effectiveType, rec.getPriority(), expiresAt, rec.getApiClientName());
 
         return requestId;
     }
@@ -213,129 +251,166 @@ public class SmsService {
         return s;
     }
 
-    /**
-     * Worker thread body.
-     * <p>
-     * Production rule:
-     * - Only mark SENT if ALL segments were accepted by SMSC (commandStatus == 0 for each part).
-     */
-    private void sendInternal(SmsJob job) {
-        String requestId = job.requestId();
+    private void runCarrierWorker(Carrier carrier, String workerName) {
+        log.info("Starting carrier worker worker={} carrier={}", workerName, carrier);
+        while (running.get() && !Thread.currentThread().isInterrupted()) {
+            try {
+                Optional<OutboundMessage> claimed = claimNextMessage(carrier, workerName);
+                if (claimed.isEmpty()) {
+                    sleepQuietly(gwProps.getWorkerIdleSleepMs());
+                    continue;
+                }
+                processClaimedMessage(claimed.get());
+            } catch (Throwable t) {
+                log.error("Carrier worker crashed worker={} carrier={} reason={}", workerName, carrier, t.getMessage(), t);
+                sleepQuietly(gwProps.getWorkerIdleSleepMs());
+            }
+        }
+        log.info("Stopping carrier worker worker={} carrier={}", workerName, carrier);
+    }
 
-        Carrier carrier = job.carrier();
-        SmppSessionManager smpp = (carrier == Carrier.MTN) ? mtnSmpp : requireAirtelSmpp();
-        AirtelSmppProperties airtelSmppProps = airtelProps;
-        SmppProperties mtnSmppProps = mtnProps;
-        log.info("Preparing to send SMS. Carrier: {} | Service Provider: {} | SMPP Host: {} | Port: {} | SystemId: {} | Password: {} | BindType: {} | WindowSize: {} | DefaultSenderId: {} | TPS: {}",
-                carrier,
-                (carrier == Carrier.MTN ? "MTN" : "AIRTEL"),
-                airtelSmppProps.getHost(),
-                airtelSmppProps.getPort(),
-                airtelSmppProps.getSystemId(),
-                airtelSmppProps.getPassword(),
-                airtelSmppProps.getBindType(),
-                airtelSmppProps.getWindowSize(),
-                airtelSmppProps.getDefaultSenderId(),
-                airtelSmppProps.getTps()
-        );
+    private Optional<OutboundMessage> claimNextMessage(Carrier carrier, String workerName) {
+        return Optional.ofNullable(transactionTemplate.execute(status -> {
+            Optional<OutboundMessage> candidate = outboundMessageRepository.findNextForDispatch(carrier.name());
+            if (candidate.isEmpty()) {
+                return null;
+            }
+
+            OutboundMessage message = candidate.get();
+            Instant now = Instant.now();
+            message.setStatus(STATUS_PROCESSING);
+            message.setLockedAt(now);
+            message.setLockedBy(workerName);
+            message.setNextAttemptAt(null);
+            message.setLastError(null);
+            outboundMessageRepository.save(message);
+            store.updateState(message.getRequestId(), "SENDING", null);
+
+            log.info("Claimed queued SMS requestId={} carrier={} type={} attempt={} worker={}",
+                    message.getRequestId(), message.getCarrier(), message.getMessageType(), message.getAttemptCount(), workerName);
+            return message;
+        }));
+    }
+
+    private void processClaimedMessage(OutboundMessage message) {
+        Instant now = Instant.now();
+        if (isExpired(message, now)) {
+            log.info("Skipping expired OTP requestId={} carrier={} expiresAt={}",
+                    message.getRequestId(), message.getCarrier(), message.getExpiresAt());
+            markExpired(message, "OTP expired before dispatch", 0);
+            return;
+        }
 
         try {
-            store.updateState(requestId, "SENDING", null);
+            Carrier carrier = message.getCarrier();
+            SmppSessionManager smpp = resolveSmpp(carrier);
+            SmppProperties selectedProps = selectSmppProperties(carrier);
+            AddressingProperties addrProps = selectAddressingProperties(carrier);
+            boolean registeredDelivery = selectedProps.isRegisteredDelivery();
+            RateLimiter limiter = selectLimiter(carrier);
 
-//            Carrier carrier = job.carrier();
-//            SmppSessionManager smpp = (carrier == Carrier.MTN) ? mtnSmpp : requireAirtelSmpp();
+            log.info("Dispatching SMS requestId={} carrier={} type={} host={} port={} bindType={} windowSize={} senderId={}",
+                    message.getRequestId(), carrier, message.getMessageType(), selectedProps.getHost(), selectedProps.getPort(),
+                    selectedProps.getBindType(), selectedProps.getWindowSize(), message.getSenderId());
 
-            boolean registeredDelivery = (carrier == Carrier.MTN) ? mtnProps.isRegisteredDelivery() : airtelProps.isRegisteredDelivery();
-            int requestExpiryTimeoutMs = (carrier == Carrier.MTN) ? mtnProps.getRequestExpiryTimeoutMs() : airtelProps.getRequestExpiryTimeoutMs();
-            AddressingProperties addrProps = (carrier == Carrier.MTN) ? mtnAddrProps : toAddressingProperties(airtelAddrProps);
-            RateLimiter limiter = (carrier == Carrier.MTN) ? mtnLimiter : airtelLimiter;
-
-            Address source = buildSourceAddress(job.senderId(), addrProps);
-
+            Address source = buildSourceAddress(message.getSenderId(), addrProps);
             Address dest = new Address(
                     (byte) addrProps.getDestTonInternational(),
                     (byte) addrProps.getDestNpiE164(),
-                    job.toMsisdn()
+                    message.getPhone()
             );
 
-            byte[] body = smpp.encodeUcs2(job.text());
+            byte[] body = smpp.encodeUcs2(message.getMessage());
             List<byte[]> segments = Ucs2Segmentation.split(body);
+            int totalSegments = Math.max(1, segments.size());
 
-            // Rate-limit by number of *submits* (segments), not by API requests.
-            limiter.acquire(Math.max(1, segments.size()));
+            if (isExpired(message, Instant.now())) {
+                markExpired(message, "OTP expired before rate-limit permit", totalSegments);
+                return;
+            }
+
+            limiter.acquire(totalSegments);
+
+            if (isExpired(message, Instant.now())) {
+                markExpired(message, "OTP expired while waiting for dispatch slot", totalSegments);
+                return;
+            }
 
             byte ref = (byte) (System.nanoTime() & 0xFF);
-            int total = segments.size();
-
-            for (int i = 0; i < total; i++) {
+            for (int i = 0; i < totalSegments; i++) {
                 SubmitSm sm = new SubmitSm();
                 sm.setSourceAddress(source);
                 sm.setDestAddress(dest);
                 sm.setDataCoding(SmppConstants.DATA_CODING_UCS2);
-
                 sm.setRegisteredDelivery(registeredDelivery
                         ? SmppConstants.REGISTERED_DELIVERY_SMSC_RECEIPT_REQUESTED
                         : SmppConstants.REGISTERED_DELIVERY_SMSC_RECEIPT_NOT_REQUESTED
                 );
 
                 byte[] payload = segments.get(i);
-
-                if (total > 1) {
-                    byte[] udh = smpp.buildConcatenationUdh8bit((byte) total, (byte) (i + 1), ref);
+                if (totalSegments > 1) {
+                    byte[] udh = smpp.buildConcatenationUdh8bit((byte) totalSegments, (byte) (i + 1), ref);
                     byte[] combined = new byte[udh.length + payload.length];
                     System.arraycopy(udh, 0, combined, 0, udh.length);
                     System.arraycopy(payload, 0, combined, udh.length, payload.length);
-
-                    // UDHI flag tells the SMSC the short_message begins with a UDH.
                     sm.setEsmClass(SmppConstants.ESM_CLASS_UDHI_MASK);
                     sm.setShortMessage(combined);
                 } else {
                     sm.setShortMessage(payload);
                 }
 
-                SubmitSmResp resp = smpp.send(sm, requestExpiryTimeoutMs);
-
-                int cs = resp.getCommandStatus();
+                SubmitSmResp resp = smpp.send(sm, selectedProps.getRequestExpiryTimeoutMs());
+                int commandStatus = resp.getCommandStatus();
                 String messageId = resp.getMessageId();
 
-                // PRODUCTION FIX: commandStatus must be 0 for success.
-                if (cs != 0) {
-                    String reason = "submit_sm rejected: commandStatus=0x" + Integer.toHexString(cs);
-                    store.updateState(requestId, "FAILED", reason);
-
-                    outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
-                        m.setStatus("FAILED");
-                        m.setDate(Instant.now());
-                        outboundMessageRepository.save(m);
-                    });
-
-                    log.warn("SMS rejected requestId={} part={}/{} status=0x{} messageId={}",
-                            requestId, i + 1, total, Integer.toHexString(cs), messageId);
-
-                    return; // stop sending remaining segments
+                if (commandStatus != 0) {
+                    String reason = "submit_sm rejected: commandStatus=0x" + Integer.toHexString(commandStatus);
+                    log.warn("SMS rejected requestId={} carrier={} part={}/{} status=0x{} messageId={}",
+                            message.getRequestId(), carrier, i + 1, totalSegments, Integer.toHexString(commandStatus), messageId);
+                    markFailed(message, reason, totalSegments);
+                    return;
                 }
 
-                store.addMessageId(requestId, messageId);
-                log.info("SMS accepted requestId={} part={}/{} messageId={}", requestId, i + 1, total, messageId);
+                store.addMessageId(message.getRequestId(), messageId);
+                log.info("SMS accepted requestId={} carrier={} part={}/{} messageId={}",
+                        message.getRequestId(), carrier, i + 1, totalSegments, messageId);
             }
 
-            store.updateState(requestId, "SENT", null);
-
-            outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
-                m.setStatus("SENT");
-                m.setDate(Instant.now());
-                outboundMessageRepository.save(m);
-            });
-
+            markSent(message, totalSegments);
         } catch (Exception e) {
-            store.updateState(requestId, "FAILED", e.getMessage());
-            log.warn("SMS failed requestId={} reason={}", requestId, e.getMessage());
+            if (isExpired(message, Instant.now())) {
+                markExpired(message, "OTP expired during retry handling", message.getSegmentCount() == null ? 0 : message.getSegmentCount());
+                return;
+            }
 
-            outboundMessageRepository.findByRequestId(requestId).ifPresent(m -> {
-                m.setStatus("FAILED");
-                m.setDate(Instant.now());
-                outboundMessageRepository.save(m);
-            });
+            if (canRetry(message)) {
+                scheduleRetry(message, e.getMessage(), message.getSegmentCount());
+                return;
+            }
+
+            markFailed(message, e.getMessage(), message.getSegmentCount() == null ? 0 : message.getSegmentCount());
+        }
+    }
+
+    private void recoverStaleMessages() {
+        if (!running.get()) {
+            return;
+        }
+
+        try {
+            Instant cutoff = Instant.now().minusSeconds(gwProps.getStaleProcessingTimeoutSeconds());
+            List<OutboundMessage> stale = transactionTemplate.execute(status ->
+                    outboundMessageRepository.findByStatusAndLockedAtBefore(STATUS_PROCESSING, cutoff));
+            if (stale == null || stale.isEmpty()) {
+                return;
+            }
+
+            for (OutboundMessage message : stale) {
+                scheduleRetry(message, "Recovered stale processing lock", message.getSegmentCount());
+            }
+            log.warn("Recovered stale queued messages count={}", stale.size());
+        } catch (Exception e) {
+            log.warn("Unable to recover stale messages reason={}", e.getMessage());
         }
     }
 
@@ -346,6 +421,163 @@ public class SmsService {
             );
         }
         return airtelSmpp;
+    }
+
+    private SmppSessionManager resolveSmpp(Carrier carrier) {
+        return (carrier == Carrier.MTN) ? mtnSmpp : requireAirtelSmpp();
+    }
+
+    private SmppProperties selectSmppProperties(Carrier carrier) {
+        return (carrier == Carrier.MTN) ? mtnProps : toSmppProperties(airtelProps);
+    }
+
+    private AddressingProperties selectAddressingProperties(Carrier carrier) {
+        return (carrier == Carrier.MTN) ? mtnAddrProps : toAddressingProperties(airtelAddrProps);
+    }
+
+    private RateLimiter selectLimiter(Carrier carrier) {
+        return (carrier == Carrier.MTN) ? mtnLimiter : airtelLimiter;
+    }
+
+    private SmppProperties toSmppProperties(AirtelSmppProperties props) {
+        SmppProperties mapped = new SmppProperties();
+        mapped.setHost(props.getHost());
+        mapped.setPort(props.getPort());
+        mapped.setSystemId(props.getSystemId());
+        mapped.setPassword(props.getPassword());
+        mapped.setSystemType(props.getSystemType());
+        mapped.setBindType(props.getBindType());
+        mapped.setInterfaceVersion(props.getInterfaceVersion());
+        mapped.setConnectTimeoutMs(props.getConnectTimeoutMs());
+        mapped.setRequestExpiryTimeoutMs(props.getRequestExpiryTimeoutMs());
+        mapped.setBindTimeoutMs(props.getBindTimeoutMs());
+        mapped.setWindowSize(props.getWindowSize());
+        mapped.setEnquireLinkIntervalMs(props.getEnquireLinkIntervalMs());
+        mapped.setReconnectDelayMs(props.getReconnectDelayMs());
+        mapped.setRegisteredDelivery(props.isRegisteredDelivery());
+        mapped.setDefaultSenderId(props.getDefaultSenderId());
+        mapped.setTps(props.getTps());
+        mapped.setSessions(props.getSessions());
+        return mapped;
+    }
+
+    private Instant resolveExpiry(MessageType messageType, Integer ttlSeconds, Instant now) {
+        if (messageType != MessageType.OTP) {
+            return null;
+        }
+        int effectiveTtl = (ttlSeconds == null) ? gwProps.getOtpDefaultTtlSeconds() : ttlSeconds;
+        return now.plusSeconds(Math.max(1, effectiveTtl));
+    }
+
+    private int resolvePriority(MessageType messageType) {
+        return (messageType == MessageType.OTP) ? gwProps.getOtpPriority() : gwProps.getNotificationPriority();
+    }
+
+    private boolean isExpired(OutboundMessage message, Instant now) {
+        return message.getMessageType() == MessageType.OTP
+                && message.getExpiresAt() != null
+                && !message.getExpiresAt().isAfter(now);
+    }
+
+    private boolean canRetry(OutboundMessage message) {
+        int currentAttempt = (message.getAttemptCount() == null) ? 0 : message.getAttemptCount();
+        return currentAttempt < gwProps.getMaxRetryAttempts();
+    }
+
+    private void markSent(OutboundMessage message, int segmentCount) {
+        Instant now = Instant.now();
+        transactionTemplate.executeWithoutResult(status -> {
+            outboundMessageRepository.findById(message.getId()).ifPresent(entity -> {
+                entity.setStatus(STATUS_SENT);
+                entity.setSegmentCount(segmentCount);
+                entity.setDate(now);
+                entity.setLockedAt(null);
+                entity.setLockedBy(null);
+                entity.setLastError(null);
+                outboundMessageRepository.save(entity);
+            });
+            store.updateState(message.getRequestId(), STATUS_SENT, null);
+        });
+    }
+
+    private void markExpired(OutboundMessage message, String reason, int segmentCount) {
+        Instant now = Instant.now();
+        transactionTemplate.executeWithoutResult(status -> {
+            outboundMessageRepository.findById(message.getId()).ifPresent(entity -> {
+                entity.setStatus(STATUS_EXPIRED);
+                entity.setSegmentCount(segmentCount == 0 ? entity.getSegmentCount() : segmentCount);
+                entity.setDate(now);
+                entity.setLockedAt(null);
+                entity.setLockedBy(null);
+                entity.setLastError(reason);
+                outboundMessageRepository.save(entity);
+            });
+            store.updateState(message.getRequestId(), STATUS_EXPIRED, reason);
+        });
+    }
+
+    private void markFailed(OutboundMessage message, String reason, Integer segmentCount) {
+        Instant now = Instant.now();
+        transactionTemplate.executeWithoutResult(status -> {
+            outboundMessageRepository.findById(message.getId()).ifPresent(entity -> {
+                entity.setStatus(STATUS_FAILED);
+                entity.setSegmentCount(segmentCount == null || segmentCount == 0 ? entity.getSegmentCount() : segmentCount);
+                entity.setDate(now);
+                entity.setLockedAt(null);
+                entity.setLockedBy(null);
+                entity.setLastError(reason);
+                outboundMessageRepository.save(entity);
+            });
+            store.updateState(message.getRequestId(), STATUS_FAILED, reason);
+        });
+        log.warn("SMS permanently failed requestId={} carrier={} reason={}", message.getRequestId(), message.getCarrier(), reason);
+    }
+
+    private void scheduleRetry(OutboundMessage message, String reason, Integer segmentCount) {
+        Instant now = Instant.now();
+        int nextAttempt = ((message.getAttemptCount() == null) ? 0 : message.getAttemptCount()) + 1;
+        long delaySeconds = computeRetryDelaySeconds(nextAttempt);
+        Instant nextAttemptAt = now.plusSeconds(delaySeconds);
+
+        transactionTemplate.executeWithoutResult(status -> {
+            outboundMessageRepository.findById(message.getId()).ifPresent(entity -> {
+                entity.setStatus(STATUS_RETRY);
+                entity.setAttemptCount(nextAttempt);
+                entity.setSegmentCount(segmentCount == null || segmentCount == 0 ? entity.getSegmentCount() : segmentCount);
+                entity.setNextAttemptAt(nextAttemptAt);
+                entity.setLockedAt(null);
+                entity.setLockedBy(null);
+                entity.setLastError(reason);
+                outboundMessageRepository.save(entity);
+            });
+            store.updateState(message.getRequestId(), STATUS_RETRY, reason);
+        });
+
+        log.warn("Scheduled SMS retry requestId={} carrier={} attempt={} nextAttemptAt={} reason={}",
+                message.getRequestId(), message.getCarrier(), nextAttempt, nextAttemptAt, reason);
+    }
+
+    private long computeRetryDelaySeconds(int attempt) {
+        long baseDelay = Math.max(1L, gwProps.getRetryBaseDelaySeconds());
+        long maxDelay = Math.max(baseDelay, gwProps.getRetryMaxDelaySeconds());
+        long exponential = baseDelay * (1L << Math.max(0, attempt - 1));
+        return Math.min(exponential, maxDelay);
+    }
+
+    private void sleepQuietly(long delayMs) {
+        try {
+            Thread.sleep(Math.max(1L, delayMs));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static ThreadFactory namedThreadFactory(String name) {
+        return runnable -> {
+            Thread thread = new Thread(runnable, name);
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     private Address buildSourceAddress(String from, AddressingProperties addrProps) {
