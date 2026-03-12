@@ -5,9 +5,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 public interface OutboundMessageRepository extends JpaRepository<OutboundMessage, Long> {
@@ -32,6 +34,46 @@ public interface OutboundMessageRepository extends JpaRepository<OutboundMessage
     }
 
     Optional<OutboundMessage> findByRequestId(String requestId);
+
+    @Query(value = """
+            SELECT *
+            FROM outbound_messages
+            WHERE carrier = :carrier
+              AND status IN ('QUEUED', 'RETRY')
+              AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP(6))
+            ORDER BY
+              CASE WHEN message_type = 'OTP' THEN 0 ELSE 1 END,
+              priority DESC,
+              id ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
+    Optional<OutboundMessage> findNextForDispatch(@Param("carrier") String carrier);
+
+    List<OutboundMessage> findByStatusAndLockedAtBefore(String status, Instant cutoff);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update OutboundMessage o
+            set o.status = :status,
+                o.nextAttemptAt = :nextAttemptAt,
+                o.lockedAt = null,
+                o.lockedBy = null,
+                o.lastError = :lastError,
+                o.date = :date,
+                o.attemptCount = :attemptCount,
+                o.segmentCount = :segmentCount
+            where o.id = :id
+            """)
+    int updateDispatchState(
+            @Param("id") Long id,
+            @Param("status") String status,
+            @Param("nextAttemptAt") Instant nextAttemptAt,
+            @Param("lastError") String lastError,
+            @Param("date") Instant date,
+            @Param("attemptCount") Integer attemptCount,
+            @Param("segmentCount") Integer segmentCount
+    );
 
     @Query("""
             select o.carrier as carrier,
