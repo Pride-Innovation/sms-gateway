@@ -68,9 +68,8 @@ sms:
     defaultSenderId: ${MTN_SMPP_SENDER_ID}
     defaultSourceMsisdn: ${SMPP_MSISDN}
 
-    # Airtel contract: TPS=20. This should represent total segments/sec per instance.
-    # If you run 2 pods, set this to 10 each (or implement distributed rate limiting).
-    tps: 20
+    # MTN contract: total submits per second per instance.
+    tps: 10
 
     # New: number of SMPP sessions (start with 1; increase only if Airtel allows)
     sessions: 1
@@ -116,10 +115,19 @@ sms:
     destNpiE164: 1             # E164
 
   gateway:
-    # New: bounded queue + workers for peak handling
+    # Legacy in-memory queue settings remain for compatibility, but durable dispatch now uses MySQL.
     queueCapacity: 50000
     workerThreads: 32
     maxTextChars: 2000
+    otpPriority: 100
+    notificationPriority: 10
+    otpDefaultTtlSeconds: 300
+    maxRetryAttempts: 5
+    retryBaseDelaySeconds: 5
+    retryMaxDelaySeconds: 300
+    workerIdleSleepMs: 100
+    recoveryIntervalSeconds: 30
+    staleProcessingTimeoutSeconds: 120
 
     # Alphanumeric sender IDs are commonly limited to 11 by many SMSCs.
     # If your provider allows 12+ (e.g. "PrideBankLtd" is 12), increase this.
