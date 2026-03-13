@@ -13,15 +13,18 @@ public class SuperAdminSeeder implements ApplicationRunner {
     private final AdminUserRepository adminUserRepository;
     private final SecurityProperties securityProperties;
     private final PasswordEncoder passwordEncoder;
+    private final AdminPasswordPolicyService adminPasswordPolicyService;
 
     public SuperAdminSeeder(
             AdminUserRepository adminUserRepository,
             SecurityProperties securityProperties,
-            PasswordEncoder passwordEncoder
+            PasswordEncoder passwordEncoder,
+            AdminPasswordPolicyService adminPasswordPolicyService
     ) {
         this.adminUserRepository = adminUserRepository;
         this.securityProperties = securityProperties;
         this.passwordEncoder = passwordEncoder;
+        this.adminPasswordPolicyService = adminPasswordPolicyService;
     }
 
     @Override
@@ -52,6 +55,9 @@ public class SuperAdminSeeder implements ApplicationRunner {
         boolean matches = admin.getPasswordHash() != null && passwordEncoder.matches(password, admin.getPasswordHash());
         if (!matches) {
             admin.setPasswordHash(passwordEncoder.encode(password));
+            adminPasswordPolicyService.markPasswordChanged(admin);
+        } else if (admin.getPasswordChangedAt() == null) {
+            adminPasswordPolicyService.markPasswordChanged(admin);
         }
 
         adminUserRepository.save(admin);
