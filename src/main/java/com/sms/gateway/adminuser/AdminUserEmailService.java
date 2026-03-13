@@ -9,6 +9,8 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
+import com.sms.gateway.security.SecurityProperties;
+
 @Service
 public class AdminUserEmailService {
 
@@ -16,13 +18,16 @@ public class AdminUserEmailService {
 
     private final JavaMailSender mailSender;
     private final String from;
+    private final SecurityProperties securityProperties;
 
     public AdminUserEmailService(
             JavaMailSender mailSender,
-            @Value("${spring.mail.sender.from:${spring.mail.username:no-reply@smsgateway.local}}") String from
+            @Value("${spring.mail.sender.from:${spring.mail.username:no-reply@smsgateway.local}}") String from,
+            SecurityProperties securityProperties
     ) {
         this.mailSender = mailSender;
         this.from = from;
+        this.securityProperties = securityProperties;
     }
 
     public boolean sendWelcomeEmail(AdminUser adminUser, String rawPassword) {
@@ -48,76 +53,78 @@ public class AdminUserEmailService {
             }
 
             mailSender.send(message);
-      return true;
+            return true;
         } catch (Exception e) {
             log.warn("Failed to send admin welcome email to {}: {}", adminUser.getEmail(), e.getMessage());
-      return false;
+            return false;
         }
     }
 
     public boolean sendPasswordResetEmail(AdminUser adminUser, String resetLink) {
-      if (adminUser.getEmail() == null || adminUser.getEmail().isBlank()) {
-        throw new IllegalArgumentException("Admin email is required to send password reset email");
-      }
-
-      try {
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-        helper.setFrom(from);
-        helper.setTo(adminUser.getEmail());
-        helper.setSubject("SMS Gateway - Password Reset Request");
-
-        String html = buildResetHtml(adminUser, resetLink);
-        String text = buildResetText(adminUser, resetLink);
-        helper.setText(text, html);
-
-        ClassPathResource logo = new ClassPathResource("static/images/pride_logo_vertical.png");
-        if (logo.exists()) {
-          helper.addInline("prideLogo", logo, "image/png");
+        if (adminUser.getEmail() == null || adminUser.getEmail().isBlank()) {
+            throw new IllegalArgumentException("Admin email is required to send password reset email");
         }
 
-        mailSender.send(message);
-        return true;
-      } catch (Exception e) {
-        log.warn("Failed to send password reset email to {}: {}", adminUser.getEmail(), e.getMessage());
-        return false;
-      }
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(from);
+            helper.setTo(adminUser.getEmail());
+            helper.setSubject("SMS Gateway - Password Reset Request");
+
+            String html = buildResetHtml(adminUser, resetLink);
+            String text = buildResetText(adminUser, resetLink);
+            helper.setText(text, html);
+
+            ClassPathResource logo = new ClassPathResource("static/images/pride_logo_vertical.png");
+            if (logo.exists()) {
+                helper.addInline("prideLogo", logo, "image/png");
+            }
+
+            mailSender.send(message);
+            return true;
+        } catch (Exception e) {
+            log.warn("Failed to send password reset email to {}: {}", adminUser.getEmail(), e.getMessage());
+            return false;
+        }
     }
 
     public boolean sendLoginOtpEmail(AdminUser adminUser, String otp, int ttlMinutes) {
-      if (adminUser.getEmail() == null || adminUser.getEmail().isBlank()) {
-        throw new IllegalArgumentException("Admin email is required to send login OTP email");
-      }
-
-      try {
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-        helper.setFrom(from);
-        helper.setTo(adminUser.getEmail());
-        helper.setSubject("SMS Gateway - Your Login OTP");
-
-        String html = buildLoginOtpHtml(adminUser, otp, ttlMinutes);
-        String text = buildLoginOtpText(adminUser, otp, ttlMinutes);
-        helper.setText(text, html);
-
-        ClassPathResource logo = new ClassPathResource("static/images/pride_logo_vertical.png");
-        if (logo.exists()) {
-          helper.addInline("prideLogo", logo, "image/png");
+        if (adminUser.getEmail() == null || adminUser.getEmail().isBlank()) {
+            throw new IllegalArgumentException("Admin email is required to send login OTP email");
         }
 
-        mailSender.send(message);
-        return true;
-      } catch (Exception e) {
-        log.warn("Failed to send login OTP email to {}: {}", adminUser.getEmail(), e.getMessage());
-        return false;
-      }
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(from);
+            helper.setTo(adminUser.getEmail());
+            helper.setSubject("SMS Gateway - Your Login OTP");
+
+            String html = buildLoginOtpHtml(adminUser, otp, ttlMinutes);
+            String text = buildLoginOtpText(adminUser, otp, ttlMinutes);
+            helper.setText(text, html);
+
+            ClassPathResource logo = new ClassPathResource("static/images/pride_logo_vertical.png");
+            if (logo.exists()) {
+                helper.addInline("prideLogo", logo, "image/png");
+            }
+
+            mailSender.send(message);
+            return true;
+        } catch (Exception e) {
+            log.warn("Failed to send login OTP email to {}: {}", adminUser.getEmail(), e.getMessage());
+            return false;
+        }
     }
 
     private String buildHtml(AdminUser adminUser, String rawPassword) {
         String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
         String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
+        String loginUrl = safe(securityProperties.getLogin().getFrontendUrl());
+        String escapedLoginUrl = escape(loginUrl);
 
         return """
                 <html>
@@ -136,7 +143,7 @@ public class AdminUserEmailService {
                             <td style="padding:26px 28px;">
                               <p style="margin:0 0 12px 0;font-size:16px;">Hello %s,</p>
                               <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;">Your admin account has been created successfully in the SMS Gateway application. Use the credentials below to log in:</p>
-
+                
                               <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;">
                                 <tr>
                                   <td style="padding:12px 14px;border-bottom:1px solid #e5e7eb;font-size:14px;"><strong>Username:</strong> %s</td>
@@ -145,7 +152,16 @@ public class AdminUserEmailService {
                                   <td style="padding:12px 14px;font-size:14px;"><strong>Temporary Password:</strong> %s</td>
                                 </tr>
                               </table>
-
+                
+                              <p style="margin:18px 0 18px 0;">
+                                <a href="%s" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-size:14px;font-weight:600;">
+                                  Go to Login
+                                </a>
+                              </p>
+                
+                              <p style="margin:0 0 8px 0;font-size:13px;color:#6b7280;">If the button does not work, copy and paste this URL into your browser:</p>
+                              <p style="margin:0 0 0 0;font-size:12px;word-break:break-all;color:#111827;">%s</p>
+                
                               <p style="margin:16px 0 0 0;font-size:13px;line-height:1.6;color:#b91c1c;"><strong>Security Notice:</strong> Please change your password immediately after your first login.</p>
                               <p style="margin:14px 0 0 0;font-size:13px;line-height:1.6;color:#4b5563;">If you did not expect this account, contact the SMS Gateway support team right away.</p>
                             </td>
@@ -161,26 +177,30 @@ public class AdminUserEmailService {
                   </table>
                 </body>
                 </html>
-                """.formatted(escape(displayName), escape(adminUser.getUsername()), escape(rawPassword));
+                """.formatted(escape(displayName), escape(adminUser.getUsername()), escape(rawPassword), escapedLoginUrl, escapedLoginUrl);
     }
 
-          private String buildText(AdminUser adminUser, String rawPassword) {
-            String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
-            String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
+    private String buildText(AdminUser adminUser, String rawPassword) {
+        String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
+        String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
+        String loginUrl = safe(securityProperties.getLogin().getFrontendUrl());
 
-            return """
+        return """
                 Hello %s,
-
+                
                 Your admin account has been created successfully in the SMS Gateway application.
-
+                
                 Username: %s
                 Temporary Password: %s
-
+                
+                Login here:
+                %s
+                
                 Security Notice: Please change your password immediately after your first login.
-
+                
                 This is an automated message from SMS Gateway Application.
-                """.formatted(displayName, adminUser.getUsername(), rawPassword);
-          }
+                """.formatted(displayName, adminUser.getUsername(), rawPassword, loginUrl);
+    }
 
     private String buildResetHtml(AdminUser adminUser, String resetLink) {
         String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
@@ -204,16 +224,16 @@ public class AdminUserEmailService {
                             <td style="padding:26px 28px;">
                               <p style="margin:0 0 12px 0;font-size:16px;">Hello %s,</p>
                               <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;">We received a request to reset your SMS Gateway account password.</p>
-
+                
                               <p style="margin:0 0 18px 0;">
                                 <a href="%s" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-size:14px;font-weight:600;">
                                   Reset Password
                                 </a>
                               </p>
-
+                
                               <p style="margin:0 0 8px 0;font-size:13px;color:#6b7280;">If the button does not work, copy and paste this URL into your browser:</p>
                               <p style="margin:0 0 0 0;font-size:12px;word-break:break-all;color:#111827;">%s</p>
-
+                
                               <p style="margin:16px 0 0 0;font-size:13px;line-height:1.6;color:#b91c1c;"><strong>Security Notice:</strong> This link expires shortly and can only be used once.</p>
                               <p style="margin:12px 0 0 0;font-size:13px;line-height:1.6;color:#4b5563;">If you did not request this reset, you can ignore this email.</p>
                             </td>
@@ -238,12 +258,12 @@ public class AdminUserEmailService {
 
         return """
                 Hello %s,
-
+                
                 We received a request to reset your SMS Gateway account password.
-
+                
                 Use this reset link:
                 %s
-
+                
                 Security Notice: This link expires shortly and can only be used once.
                 If you did not request this reset, you can ignore this email.
                 """.formatted(displayName, resetLink);
@@ -270,11 +290,11 @@ public class AdminUserEmailService {
                             <td style="padding:26px 28px;">
                               <p style="margin:0 0 12px 0;font-size:16px;">Hello %s,</p>
                               <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;">Use the one-time passcode below to complete your login:</p>
-
+                
                               <div style="margin:0 0 18px 0;padding:14px 16px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;font-size:26px;font-weight:700;letter-spacing:4px;text-align:center;">
                                 %s
                               </div>
-
+                
                               <p style="margin:0 0 0 0;font-size:13px;line-height:1.6;color:#b91c1c;"><strong>Security Notice:</strong> This OTP expires in %d minutes and can only be used once.</p>
                             </td>
                           </tr>
@@ -298,10 +318,10 @@ public class AdminUserEmailService {
 
         return """
                 Hello %s,
-
+                
                 Use this OTP to complete your SMS Gateway login:
                 %s
-
+                
                 This OTP expires in %d minutes and can only be used once.
                 """.formatted(displayName, otp, ttlMinutes);
     }
