@@ -21,30 +21,38 @@ public class AdminUserLoginOtpService {
     private final AdminUserLoginOtpRepository otpRepository;
     private final AdminUserEmailService adminUserEmailService;
     private final SecurityProperties securityProperties;
+    private final AdminPasswordPolicyService adminPasswordPolicyService;
 
     public AdminUserLoginOtpService(
             AdminUserRepository adminUserRepository,
             PasswordEncoder passwordEncoder,
             AdminUserLoginOtpRepository otpRepository,
             AdminUserEmailService adminUserEmailService,
-            SecurityProperties securityProperties
+            SecurityProperties securityProperties,
+            AdminPasswordPolicyService adminPasswordPolicyService
     ) {
         this.adminUserRepository = adminUserRepository;
         this.passwordEncoder = passwordEncoder;
         this.otpRepository = otpRepository;
         this.adminUserEmailService = adminUserEmailService;
         this.securityProperties = securityProperties;
+        this.adminPasswordPolicyService = adminPasswordPolicyService;
     }
 
     @Transactional
-    public boolean initiateOtpLogin(String username, String password) {
+    public LoginInitiationResult initiateOtpLogin(String username, String password) {
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
-            return false;
+            return LoginInitiationResult.invalidCredentials();
         }
 
         AdminUser user = adminUserRepository.findByUsernameIgnoreCase(username.trim()).orElse(null);
         if (user == null || !user.isEnabled() || !passwordEncoder.matches(password, user.getPasswordHash())) {
-            return false;
+            return LoginInitiationResult.invalidCredentials();
+        }
+
+        AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(user);
+        if (passwordStatus.blocksAuthentication()) {
+            return LoginInitiationResult.blocked(passwordStatus);
         }
 
         if (user.getEmail() == null || user.getEmail().isBlank()) {
@@ -73,7 +81,7 @@ public class AdminUserLoginOtpService {
         if (!sent) {
             throw new IllegalStateException("Unable to send OTP email at the moment");
         }
-        return true;
+        return LoginInitiationResult.otpSent(ttlMinutes);
     }
 
     @Transactional
@@ -85,6 +93,11 @@ public class AdminUserLoginOtpService {
         AdminUser user = adminUserRepository.findByUsernameIgnoreCase(username.trim()).orElse(null);
         if (user == null || !user.isEnabled()) {
             return OtpVerificationResult.invalid();
+        }
+
+        AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(user);
+        if (passwordStatus.blocksAuthentication()) {
+            return OtpVerificationResult.blocked(passwordStatus);
         }
 
         AdminUserLoginOtp loginOtp = otpRepository
@@ -149,6 +162,13 @@ public class AdminUserLoginOtpService {
             return new OtpVerificationResult(Status.SUCCESS, user);
         }
 
+        public static OtpVerificationResult blocked(AdminPasswordPolicyService.PasswordStatus passwordStatus) {
+            if (passwordStatus.passwordExpired()) {
+                return new OtpVerificationResult(Status.PASSWORD_EXPIRED, null);
+            }
+            return new OtpVerificationResult(Status.PASSWORD_CHANGE_REQUIRED, null);
+        }
+
         public static OtpVerificationResult invalid() {
             return new OtpVerificationResult(Status.INVALID, null);
         }
@@ -162,8 +182,27 @@ public class AdminUserLoginOtpService {
         }
     }
 
+    public record LoginInitiationResult(Status status, AdminPasswordPolicyService.PasswordStatus passwordStatus, Integer otpTtlMinutes) {
+        public static LoginInitiationResult otpSent(int otpTtlMinutes) {
+            return new LoginInitiationResult(Status.SUCCESS, null, otpTtlMinutes);
+        }
+
+        public static LoginInitiationResult invalidCredentials() {
+            return new LoginInitiationResult(Status.INVALID, null, null);
+        }
+
+        public static LoginInitiationResult blocked(AdminPasswordPolicyService.PasswordStatus passwordStatus) {
+            if (passwordStatus.passwordExpired()) {
+                return new LoginInitiationResult(Status.PASSWORD_EXPIRED, passwordStatus, null);
+            }
+            return new LoginInitiationResult(Status.PASSWORD_CHANGE_REQUIRED, passwordStatus, null);
+        }
+    }
+
     public enum Status {
         SUCCESS,
+        PASSWORD_CHANGE_REQUIRED,
+        PASSWORD_EXPIRED,
         INVALID,
         EXPIRED,
         TOO_MANY_ATTEMPTS
