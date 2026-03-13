@@ -13,5 +13,7 @@ app:
     admin:
       username: test-admin
       password: test-admin-password
+      passwordExpiryDays: 90
+      passwordChangeTokenTtlMinutes: 10
     login:
       frontendUrl: http://localhost:3000/login
