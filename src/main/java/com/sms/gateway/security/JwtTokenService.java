@@ -22,9 +22,11 @@ public class JwtTokenService {
     private final SecretKey secretKey;
     private final long accessTtlSeconds;
     private final long refreshTtlSeconds;
+    private final long passwordChangeTtlSeconds;
 
     public JwtTokenService(SecurityProperties securityProperties) {
         SecurityProperties.Jwt jwt = securityProperties.getJwt();
+        SecurityProperties.Admin admin = securityProperties.getAdmin();
         String configured = jwt.getSecret();
         if (configured == null || configured.isEmpty()) {
             throw new IllegalStateException("app.security.jwt.secret must be configured");
@@ -32,6 +34,7 @@ public class JwtTokenService {
         this.secretKey = buildSecretKey(configured);
         this.accessTtlSeconds = jwt.getAccessTtlSeconds();
         this.refreshTtlSeconds = jwt.getRefreshTtlSeconds();
+        this.passwordChangeTtlSeconds = Math.max(60L, admin.getPasswordChangeTokenTtlMinutes() * 60L);
     }
 
     public String createAccessToken(String subject, List<String> roles) {
@@ -40,6 +43,19 @@ public class JwtTokenService {
 
     public String createRefreshToken(String subject) {
         return createToken(subject, List.of(), refreshTtlSeconds, Map.of("type", "refresh"));
+    }
+
+    public String createPasswordChangeToken(String subject, String reason) {
+        return createToken(subject, List.of(), passwordChangeTtlSeconds,
+                Map.of("type", "password_change", "reason", reason));
+    }
+
+    public Claims parsePasswordChangeToken(String token) {
+        Claims claims = parse(token);
+        if (!"password_change".equals(claims.get("type"))) {
+            throw new IllegalArgumentException("Invalid password change token");
+        }
+        return claims;
     }
 
     private String createToken(String subject, List<String> roles, long ttlSeconds, Map<String, Object> extraClaims) {
