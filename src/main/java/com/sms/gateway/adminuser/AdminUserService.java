@@ -23,19 +23,22 @@ public class AdminUserService {
     private final AdminUserEmailService adminUserEmailService;
     private final AdminUserPasswordResetTokenRepository passwordResetTokenRepository;
     private final SecurityProperties securityProperties;
+    private final AdminPasswordPolicyService adminPasswordPolicyService;
 
     public AdminUserService(
             AdminUserRepository repository,
             PasswordEncoder passwordEncoder,
             AdminUserEmailService adminUserEmailService,
             AdminUserPasswordResetTokenRepository passwordResetTokenRepository,
-            SecurityProperties securityProperties
+            SecurityProperties securityProperties,
+            AdminPasswordPolicyService adminPasswordPolicyService
     ) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
         this.adminUserEmailService = adminUserEmailService;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.securityProperties = securityProperties;
+        this.adminPasswordPolicyService = adminPasswordPolicyService;
     }
 
     @Transactional
@@ -65,6 +68,7 @@ public class AdminUserService {
         adminUser.setDepartment(normalizeOptional(department));
         adminUser.setPasswordHash(passwordEncoder.encode(rawPassword));
         adminUser.setEnabled(enabled == null || enabled);
+        adminPasswordPolicyService.markTemporaryPassword(adminUser);
 
         try {
             AdminUser saved = repository.save(adminUser);
@@ -114,7 +118,9 @@ public class AdminUserService {
         }
 
         if (rawPassword != null && !rawPassword.isBlank()) {
+            validateNewPasswordIsDifferent(existing, rawPassword);
             existing.setPasswordHash(passwordEncoder.encode(rawPassword));
+            adminPasswordPolicyService.markTemporaryPassword(existing);
         }
 
         if (firstName != null) {
@@ -174,8 +180,23 @@ public class AdminUserService {
             throw new IllegalArgumentException("Old password is incorrect");
         }
 
+        validateNewPasswordIsDifferent(adminUser, newPassword);
         adminUser.setPasswordHash(passwordEncoder.encode(newPassword));
+        adminPasswordPolicyService.markPasswordChanged(adminUser);
         repository.save(adminUser);
+    }
+
+    @Transactional
+    public void changePasswordForBlockedLogin(String username, String oldPassword, String newPassword) {
+        AdminUser adminUser = repository.findByUsernameIgnoreCase(normalizeUsername(username))
+                .orElseThrow(() -> new IllegalArgumentException("Admin user not found"));
+
+        AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(adminUser);
+        if (!passwordStatus.blocksAuthentication()) {
+            throw new IllegalArgumentException("Password change challenge is no longer valid");
+        }
+
+        changePassword(adminUser.getUsername(), oldPassword, newPassword);
     }
 
     @Transactional
@@ -235,7 +256,9 @@ public class AdminUserService {
         }
 
         AdminUser adminUser = resetToken.getAdminUser();
+    validateNewPasswordIsDifferent(adminUser, newPassword);
         adminUser.setPasswordHash(passwordEncoder.encode(newPassword));
+    adminPasswordPolicyService.markPasswordChanged(adminUser);
         repository.save(adminUser);
 
         resetToken.setUsedAt(now);
@@ -258,5 +281,11 @@ public class AdminUserService {
 
     private String normalizeOptional(String value) {
         return value == null ? null : value.trim();
+    }
+
+    private void validateNewPasswordIsDifferent(AdminUser adminUser, String newPassword) {
+        if (adminUser.getPasswordHash() != null && passwordEncoder.matches(newPassword, adminUser.getPasswordHash())) {
+            throw new IllegalArgumentException("New password must be different from the current password");
+        }
     }
 }
