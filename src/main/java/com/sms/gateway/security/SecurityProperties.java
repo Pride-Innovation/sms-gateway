@@ -1,10 +1,14 @@
 package com.sms.gateway.security;
 
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
 import java.util.List;
 
+@Getter
 @ConfigurationProperties(prefix = "app.security")
 public class SecurityProperties {
 
@@ -12,20 +16,11 @@ public class SecurityProperties {
     private final Jwt jwt = new Jwt();
     private final Cors cors = new Cors();
     private final PasswordReset passwordReset = new PasswordReset();
+    private final Login login = new Login();
     private final LoginOtp loginOtp = new LoginOtp();
 
-    public Admin getAdmin() {
-        return admin;
-    }
-
-    public Jwt getJwt() { return jwt; }
-
-    public Cors getCors() { return cors; }
-
-    public PasswordReset getPasswordReset() { return passwordReset; }
-
-    public LoginOtp getLoginOtp() { return loginOtp; }
-
+    @Setter
+    @Getter
     public static class Admin {
         /**
          * Super-admin username for accessing /api/admin/** endpoints (HTTP Basic).
@@ -37,39 +32,28 @@ public class SecurityProperties {
          */
         private String password;
 
-        public String getUsername() {
-            return username;
-        }
-
-        public void setUsername(String username) {
-            this.username = username;
-        }
-
-        public String getPassword() {
-            return password;
-        }
-
-        public void setPassword(String password) {
-            this.password = password;
-        }
     }
 
+    @Setter
+    @Getter
     public static class Jwt {
-        /** Secret key for signing JWTs (HS256). */
+        /**
+         * Secret key for signing JWTs (HS256).
+         */
         private String secret;
-        /** Access token time-to-live in seconds. */
+        /**
+         * Access token time-to-live in seconds.
+         */
         private long accessTtlSeconds = 900; // 15 minutes
-        /** Refresh token time-to-live in seconds. */
+        /**
+         * Refresh token time-to-live in seconds.
+         */
         private long refreshTtlSeconds = 2592000; // 30 days
 
-        public String getSecret() { return secret; }
-        public void setSecret(String secret) { this.secret = secret; }
-        public long getAccessTtlSeconds() { return accessTtlSeconds; }
-        public void setAccessTtlSeconds(long accessTtlSeconds) { this.accessTtlSeconds = accessTtlSeconds; }
-        public long getRefreshTtlSeconds() { return refreshTtlSeconds; }
-        public void setRefreshTtlSeconds(long refreshTtlSeconds) { this.refreshTtlSeconds = refreshTtlSeconds; }
     }
 
+    @Setter
+    @Getter
     public static class Cors {
         private List<String> allowedOrigins = new ArrayList<>(List.of("*"));
         private List<String> allowedMethods = new ArrayList<>(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
@@ -78,48 +62,28 @@ public class SecurityProperties {
         private boolean allowCredentials = false;
         private long maxAgeSeconds = 3600;
 
-        public List<String> getAllowedOrigins() { return allowedOrigins; }
-        public void setAllowedOrigins(List<String> allowedOrigins) { this.allowedOrigins = allowedOrigins; }
-        public List<String> getAllowedMethods() { return allowedMethods; }
-        public void setAllowedMethods(List<String> allowedMethods) { this.allowedMethods = allowedMethods; }
-        public List<String> getAllowedHeaders() { return allowedHeaders; }
-        public void setAllowedHeaders(List<String> allowedHeaders) { this.allowedHeaders = allowedHeaders; }
-        public List<String> getExposedHeaders() { return exposedHeaders; }
-        public void setExposedHeaders(List<String> exposedHeaders) { this.exposedHeaders = exposedHeaders; }
-        public boolean isAllowCredentials() { return allowCredentials; }
-        public void setAllowCredentials(boolean allowCredentials) { this.allowCredentials = allowCredentials; }
-        public long getMaxAgeSeconds() { return maxAgeSeconds; }
-        public void setMaxAgeSeconds(long maxAgeSeconds) { this.maxAgeSeconds = maxAgeSeconds; }
     }
 
+    @Setter
+    @Getter
     public static class PasswordReset {
         private String frontendUrl = "http://localhost:3000/reset-password";
         private long tokenTtlMinutes = 30;
 
-        public String getFrontendUrl() { return frontendUrl; }
-        public void setFrontendUrl(String frontendUrl) { this.frontendUrl = frontendUrl; }
-        public long getTokenTtlMinutes() { return tokenTtlMinutes; }
-        public void setTokenTtlMinutes(long tokenTtlMinutes) { this.tokenTtlMinutes = tokenTtlMinutes; }
     }
 
+    @Setter
+    @Getter
+    public static class Login {
+        private String frontendUrl = "http://localhost:3000/login";
+
+    }
+
+    @Setter
+    @Getter
     public static class LoginOtp {
         private int ttlMinutes = 5;
         private int maxAttempts = 5;
 
-        public int getTtlMinutes() {
-            return ttlMinutes;
-        }
-
-        public void setTtlMinutes(int ttlMinutes) {
-            this.ttlMinutes = ttlMinutes;
-        }
-
-        public int getMaxAttempts() {
-            return maxAttempts;
-        }
-
-        public void setMaxAttempts(int maxAttempts) {
-            this.maxAttempts = maxAttempts;
-        }
     }
 }
