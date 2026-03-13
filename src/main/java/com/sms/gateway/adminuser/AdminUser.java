@@ -52,6 +52,12 @@ public class AdminUser {
     private String passwordHash;
 
     @Column(nullable = false)
+    private boolean passwordChangeRequired = false;
+
+    @Column
+    private Instant passwordChangedAt;
+
+    @Column(nullable = false)
     private boolean enabled = true;
 
     @Column(nullable = false, updatable = false)
