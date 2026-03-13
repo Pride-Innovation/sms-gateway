@@ -2,7 +2,6 @@ package com.sms.gateway.security;
 
 import lombok.Getter;
 import lombok.Setter;
-import lombok.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
@@ -31,6 +30,16 @@ public class SecurityProperties {
          * Super-admin password for accessing /api/admin/** endpoints (HTTP Basic).
          */
         private String password;
+
+        /**
+         * Maximum password age in days for admin users.
+         */
+        private long passwordExpiryDays = 90;
+
+        /**
+         * Lifetime of the forced password-change challenge token in minutes.
+         */
+        private long passwordChangeTokenTtlMinutes = 10;
 
     }
 
