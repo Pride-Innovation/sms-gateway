@@ -46,8 +46,11 @@ public class AdminUserLoginOtpService {
         }
 
         AdminUser user = adminUserRepository.findByUsernameIgnoreCase(username.trim()).orElse(null);
-        if (user == null || !user.isEnabled() || !passwordEncoder.matches(password, user.getPasswordHash())) {
+        if (user == null || !passwordEncoder.matches(password, user.getPasswordHash())) {
             return LoginInitiationResult.invalidCredentials();
+        }
+        if (!user.isEnabled()) {
+            return LoginInitiationResult.accountDisabled();
         }
 
         AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(user);
@@ -91,8 +94,11 @@ public class AdminUserLoginOtpService {
         }
 
         AdminUser user = adminUserRepository.findByUsernameIgnoreCase(username.trim()).orElse(null);
-        if (user == null || !user.isEnabled()) {
+        if (user == null) {
             return OtpVerificationResult.invalid();
+        }
+        if (!user.isEnabled()) {
+            return OtpVerificationResult.accountDisabled();
         }
 
         AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(user);
@@ -169,6 +175,10 @@ public class AdminUserLoginOtpService {
             return new OtpVerificationResult(Status.PASSWORD_CHANGE_REQUIRED, null);
         }
 
+        public static OtpVerificationResult accountDisabled() {
+            return new OtpVerificationResult(Status.ACCOUNT_DISABLED, null);
+        }
+
         public static OtpVerificationResult invalid() {
             return new OtpVerificationResult(Status.INVALID, null);
         }
@@ -191,6 +201,10 @@ public class AdminUserLoginOtpService {
             return new LoginInitiationResult(Status.INVALID, null, null);
         }
 
+        public static LoginInitiationResult accountDisabled() {
+            return new LoginInitiationResult(Status.ACCOUNT_DISABLED, null, null);
+        }
+
         public static LoginInitiationResult blocked(AdminPasswordPolicyService.PasswordStatus passwordStatus) {
             if (passwordStatus.passwordExpired()) {
                 return new LoginInitiationResult(Status.PASSWORD_EXPIRED, passwordStatus, null);
@@ -203,6 +217,7 @@ public class AdminUserLoginOtpService {
         SUCCESS,
         PASSWORD_CHANGE_REQUIRED,
         PASSWORD_EXPIRED,
+        ACCOUNT_DISABLED,
         INVALID,
         EXPIRED,
         TOO_MANY_ATTEMPTS

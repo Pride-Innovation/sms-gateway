@@ -165,6 +165,16 @@ public class AdminUserService {
     }
 
     @Transactional
+    public AdminUser enable(Long id) {
+        return setEnabledState(id, true);
+    }
+
+    @Transactional
+    public AdminUser disable(Long id) {
+        return setEnabledState(id, false);
+    }
+
+    @Transactional
     public void changePassword(String username, String oldPassword, String newPassword) {
         if (oldPassword == null || oldPassword.isBlank()) {
             throw new IllegalArgumentException("oldPassword is required");
@@ -287,5 +297,12 @@ public class AdminUserService {
         if (adminUser.getPasswordHash() != null && passwordEncoder.matches(newPassword, adminUser.getPasswordHash())) {
             throw new IllegalArgumentException("New password must be different from the current password");
         }
+    }
+
+    private AdminUser setEnabledState(Long id, boolean enabled) {
+        AdminUser adminUser = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Admin user not found"));
+        adminUser.setEnabled(enabled);
+        return repository.save(adminUser);
     }
 }

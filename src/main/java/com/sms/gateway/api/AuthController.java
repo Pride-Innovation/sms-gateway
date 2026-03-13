@@ -46,6 +46,9 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest req) {
         var initiation = adminUserLoginOtpService.initiateOtpLogin(req.username(), req.password());
+        if (initiation.status() == AdminUserLoginOtpService.Status.ACCOUNT_DISABLED) {
+            return buildDisabledAccountResponse("This admin account has been disabled. Please contact your administrator.");
+        }
         if (initiation.status() == AdminUserLoginOtpService.Status.INVALID) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
         }
@@ -70,6 +73,9 @@ public class AuthController {
     @PostMapping("/login/verify-otp")
     public ResponseEntity<?> verifyLoginOtp(@RequestBody @Valid VerifyLoginOtpRequest req) {
         var verification = adminUserLoginOtpService.verifyOtpAndGetUser(req.username(), req.otp());
+        if (verification.status() == AdminUserLoginOtpService.Status.ACCOUNT_DISABLED) {
+            return buildDisabledAccountResponse("This admin account has been disabled. Please contact your administrator.");
+        }
         if (verification.status() == AdminUserLoginOtpService.Status.INVALID) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid OTP"));
         }
@@ -114,8 +120,11 @@ public class AuthController {
             String username = claims.getSubject();
             // Ensure user still exists and enabled
             AdminUser user = adminUserRepository.findByUsernameIgnoreCase(username).orElse(null);
-            if (user == null || !user.isEnabled()) {
+            if (user == null) {
                 return ResponseEntity.status(401).body(Map.of("error", "User invalid"));
+            }
+            if (!user.isEnabled()) {
+                return buildDisabledAccountResponse("This admin account has been disabled. Please contact your administrator.");
             }
             AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(user);
             if (passwordStatus.blocksAuthentication()) {
@@ -209,5 +218,12 @@ public class AuthController {
             throw new IllegalArgumentException("Password change token is required");
         }
         return authorizationHeader.substring(7).trim();
+    }
+
+    private ResponseEntity<?> buildDisabledAccountResponse(String message) {
+        return ResponseEntity.status(403).body(Map.of(
+                "error", message,
+                "accountDisabled", true
+        ));
     }
 }

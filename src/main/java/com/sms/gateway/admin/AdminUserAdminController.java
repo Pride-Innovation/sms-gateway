@@ -75,6 +75,16 @@ public class AdminUserAdminController {
         ));
     }
 
+    @PostMapping("/{id}/enable")
+    public AdminUserResponse enable(@PathVariable Long id) {
+        return toResponse(service.enable(id));
+    }
+
+    @PostMapping("/{id}/disable")
+    public AdminUserResponse disable(@PathVariable Long id) {
+        return toResponse(service.disable(id));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         service.delete(id);

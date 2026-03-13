@@ -73,6 +73,20 @@ class AuthControllerTests {
     }
 
     @Test
+    void disabledLoginReturnsDedicatedDisabledResponse() {
+        when(adminUserLoginOtpService.initiateOtpLogin("alice", "Temp#123"))
+                .thenReturn(AdminUserLoginOtpService.LoginInitiationResult.accountDisabled());
+
+        ResponseEntity<?> response = authController.login(new AuthController.LoginRequest("alice", "Temp#123"));
+
+        assertEquals(403, response.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertNotNull(body);
+        assertEquals(true, body.get("accountDisabled"));
+    }
+
+    @Test
     void requiredPasswordChangeUsesUsernameFromChallengeToken() {
         String token = jwtTokenService.createPasswordChangeToken("alice", "first_login");
 
