@@ -85,4 +85,20 @@ class AdminUserServiceTests {
 
         assertTrue(exception.getMessage().contains("different from the current password"));
     }
+
+    @Test
+    void resetPasswordRejectsLockedAccounts() {
+        AdminUser adminUser = new AdminUser();
+        adminUser.setAccountLocked(true);
+
+        AdminUserPasswordResetToken resetToken = new AdminUserPasswordResetToken();
+        resetToken.setToken("reset-token");
+        resetToken.setAdminUser(adminUser);
+        resetToken.setExpiresAt(java.time.Instant.now().plusSeconds(600));
+
+        when(passwordResetTokenRepository.findByToken("reset-token")).thenReturn(Optional.of(resetToken));
+
+        assertThrows(AccountLockedException.class,
+                () -> adminUserService.resetPasswordWithToken("reset-token", "New#123"));
+    }
 }
