@@ -140,6 +140,7 @@ app:
       password: ${ADMIN_PASSWORD}
       passwordExpiryDays: ${ADMIN_PASSWORD_EXPIRY_DAYS:90}
       passwordChangeTokenTtlMinutes: ${ADMIN_PASSWORD_CHANGE_TOKEN_TTL_MINUTES:10}
+      maxFailedLoginAttempts: ${ADMIN_MAX_FAILED_LOGIN_ATTEMPTS:3}
     jwt:
       # Base64-encoded secret (e.g. from 256-bit key). Do not hardcode; use env.
       secret: ${JWT_SECRET}

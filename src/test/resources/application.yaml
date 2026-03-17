@@ -15,5 +15,6 @@ app:
       password: test-admin-password
       passwordExpiryDays: 90
       passwordChangeTokenTtlMinutes: 10
+      maxFailedLoginAttempts: 3
     login:
       frontendUrl: http://localhost:3000/login
