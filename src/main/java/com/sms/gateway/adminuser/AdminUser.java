@@ -60,6 +60,15 @@ public class AdminUser {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    @Column(nullable = false)
+    private int failedLoginAttempts = 0;
+
+    @Column(nullable = false)
+    private boolean accountLocked = false;
+
+    @Column
+    private Instant accountLockedAt;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
