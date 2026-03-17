@@ -85,6 +85,11 @@ public class AdminUserAdminController {
         return toResponse(service.disable(id));
     }
 
+    @PostMapping("/{id}/unlock")
+    public AdminUserResponse unlock(@PathVariable Long id) {
+        return toResponse(service.unlock(id));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         service.delete(id);
@@ -101,6 +106,8 @@ public class AdminUserAdminController {
             adminUser.getTitle(),
             adminUser.getDepartment(),
                 adminUser.isEnabled(),
+                adminUser.isAccountLocked(),
+                adminUser.getFailedLoginAttempts(),
                 adminUser.getCreatedAt(),
                 adminUser.getUpdatedAt()
         );
