@@ -41,6 +41,11 @@ public class SecurityProperties {
          */
         private long passwordChangeTokenTtlMinutes = 10;
 
+        /**
+         * Maximum consecutive failed login attempts before the admin account is locked.
+         */
+        private int maxFailedLoginAttempts = 3;
+
     }
 
     @Setter
