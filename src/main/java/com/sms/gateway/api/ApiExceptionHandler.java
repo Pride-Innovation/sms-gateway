@@ -1,5 +1,6 @@
 package com.sms.gateway.api;
 
+import com.sms.gateway.adminuser.AccountLockedException;
 import com.sms.gateway.service.TooManyRequestsException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.ResponseEntity;
@@ -42,6 +43,14 @@ public class ApiExceptionHandler {
     @ExceptionHandler(TooManyRequestsException.class)
     public ResponseEntity<?> tooMany(TooManyRequestsException e) {
         return ResponseEntity.status(429).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(AccountLockedException.class)
+    public ResponseEntity<?> accountLocked(AccountLockedException e) {
+        return ResponseEntity.status(423).body(Map.of(
+                "error", e.getMessage(),
+                "accountLocked", true
+        ));
     }
 
     @ExceptionHandler(Exception.class)
