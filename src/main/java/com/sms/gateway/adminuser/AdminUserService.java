@@ -175,6 +175,14 @@ public class AdminUserService {
     }
 
     @Transactional
+    public AdminUser unlock(Long id) {
+        AdminUser adminUser = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Admin user not found"));
+        clearLoginLock(adminUser);
+        return repository.save(adminUser);
+    }
+
+    @Transactional
     public void changePassword(String username, String oldPassword, String newPassword) {
         if (oldPassword == null || oldPassword.isBlank()) {
             throw new IllegalArgumentException("oldPassword is required");
@@ -193,6 +201,7 @@ public class AdminUserService {
         validateNewPasswordIsDifferent(adminUser, newPassword);
         adminUser.setPasswordHash(passwordEncoder.encode(newPassword));
         adminPasswordPolicyService.markPasswordChanged(adminUser);
+        clearLoginLock(adminUser);
         repository.save(adminUser);
     }
 
@@ -217,7 +226,7 @@ public class AdminUserService {
 
         String normalizedEmail = normalizeEmail(email);
         AdminUser adminUser = repository.findByEmailIgnoreCase(normalizedEmail).orElse(null);
-        if (adminUser == null || !adminUser.isEnabled()) {
+        if (adminUser == null || !adminUser.isEnabled() || adminUser.isAccountLocked()) {
             return;
         }
 
@@ -266,9 +275,13 @@ public class AdminUserService {
         }
 
         AdminUser adminUser = resetToken.getAdminUser();
-    validateNewPasswordIsDifferent(adminUser, newPassword);
+        if (adminUser.isAccountLocked()) {
+            throw new AccountLockedException("This account has been locked after multiple failed login attempts. Please contact your administrator to reopen it.");
+        }
+        validateNewPasswordIsDifferent(adminUser, newPassword);
         adminUser.setPasswordHash(passwordEncoder.encode(newPassword));
-    adminPasswordPolicyService.markPasswordChanged(adminUser);
+        adminPasswordPolicyService.markPasswordChanged(adminUser);
+        clearLoginLock(adminUser);
         repository.save(adminUser);
 
         resetToken.setUsedAt(now);
@@ -304,5 +317,11 @@ public class AdminUserService {
                 .orElseThrow(() -> new IllegalArgumentException("Admin user not found"));
         adminUser.setEnabled(enabled);
         return repository.save(adminUser);
+    }
+
+    private void clearLoginLock(AdminUser adminUser) {
+        adminUser.setFailedLoginAttempts(0);
+        adminUser.setAccountLocked(false);
+        adminUser.setAccountLockedAt(null);
     }
 }
