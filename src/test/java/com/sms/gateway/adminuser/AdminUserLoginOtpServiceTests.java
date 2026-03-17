@@ -13,6 +13,9 @@ import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -73,6 +76,37 @@ class AdminUserLoginOtpServiceTests {
         var result = adminUserLoginOtpService.initiateOtpLogin("alice", "Current#123");
 
         assertEquals(AdminUserLoginOtpService.Status.PASSWORD_EXPIRED, result.status());
+    }
+
+    @Test
+    void initiateOtpLoginReturnsWarningOnSecondFailedAttempt() {
+        AdminUser adminUser = baseAdminUser();
+        adminUser.setFailedLoginAttempts(1);
+
+        when(adminUserRepository.findByUsernameIgnoreCase("alice")).thenReturn(Optional.of(adminUser));
+        when(passwordEncoder.matches("wrong-password", "stored-hash")).thenReturn(false);
+
+        var result = adminUserLoginOtpService.initiateOtpLogin("alice", "wrong-password");
+
+        assertEquals(AdminUserLoginOtpService.Status.INVALID_WARNING, result.status());
+        assertEquals(2, adminUser.getFailedLoginAttempts());
+        verify(adminUserEmailService, never()).sendAccountLockedEmail(any(AdminUser.class), any(Integer.class));
+    }
+
+    @Test
+    void initiateOtpLoginLocksAccountOnThirdFailedAttempt() {
+        AdminUser adminUser = baseAdminUser();
+        adminUser.setFailedLoginAttempts(2);
+
+        when(adminUserRepository.findByUsernameIgnoreCase("alice")).thenReturn(Optional.of(adminUser));
+        when(passwordEncoder.matches("wrong-password", "stored-hash")).thenReturn(false);
+
+        var result = adminUserLoginOtpService.initiateOtpLogin("alice", "wrong-password");
+
+        assertEquals(AdminUserLoginOtpService.Status.ACCOUNT_LOCKED, result.status());
+        assertEquals(3, adminUser.getFailedLoginAttempts());
+        assertEquals(true, adminUser.isAccountLocked());
+        verify(adminUserEmailService).sendAccountLockedEmail(adminUser, 3);
     }
 
     private AdminUser baseAdminUser() {
