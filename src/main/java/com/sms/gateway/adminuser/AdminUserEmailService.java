@@ -120,6 +120,36 @@ public class AdminUserEmailService {
         }
     }
 
+      public boolean sendAccountLockedEmail(AdminUser adminUser, int maxAttempts) {
+        if (adminUser.getEmail() == null || adminUser.getEmail().isBlank()) {
+          return false;
+        }
+
+        try {
+          MimeMessage message = mailSender.createMimeMessage();
+          MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+          helper.setFrom(from);
+          helper.setTo(adminUser.getEmail());
+          helper.setSubject("SMS Gateway - Admin Account Locked");
+
+          String html = buildAccountLockedHtml(adminUser, maxAttempts);
+          String text = buildAccountLockedText(adminUser, maxAttempts);
+          helper.setText(text, html);
+
+          ClassPathResource logo = new ClassPathResource("static/images/pride_logo_vertical.png");
+          if (logo.exists()) {
+            helper.addInline("prideLogo", logo, "image/png");
+          }
+
+          mailSender.send(message);
+          return true;
+        } catch (Exception e) {
+          log.warn("Failed to send account locked email to {}: {}", adminUser.getEmail(), e.getMessage());
+          return false;
+        }
+      }
+
     private String buildHtml(AdminUser adminUser, String rawPassword) {
         String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
         String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
@@ -324,6 +354,59 @@ public class AdminUserEmailService {
                 
                 This OTP expires in %d minutes and can only be used once.
                 """.formatted(displayName, otp, ttlMinutes);
+    }
+
+    private String buildAccountLockedHtml(AdminUser adminUser, int maxAttempts) {
+        String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
+        String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
+
+        return """
+                <html>
+                <body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+                  <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#f4f6f8;padding:24px 0;">
+                    <tr>
+                      <td align="center">
+                        <table role="presentation" width="680" cellspacing="0" cellpadding="0" style="max-width:680px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+                          <tr>
+                            <td style="background:#0f172a;padding:18px 24px;text-align:center;">
+                              <img src="cid:prideLogo" alt="Pride" style="max-height:54px;display:block;margin:0 auto 10px auto;" />
+                              <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:0.2px;">SMS Gateway Application</div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:26px 28px;">
+                              <p style="margin:0 0 12px 0;font-size:16px;">Hello %s,</p>
+                              <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;">Your admin account has been locked after %d failed login attempts.</p>
+                              <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;color:#b91c1c;"><strong>Action required:</strong> Please contact your administrator to reopen your account before trying again.</p>
+                              <p style="margin:0;font-size:13px;line-height:1.6;color:#4b5563;">If this was not you, notify your administrator immediately.</p>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:14px 24px;background:#f9fafb;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-align:center;">
+                              This is an automated message from SMS Gateway Application. Please do not reply directly to this email.
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(escape(displayName), maxAttempts);
+    }
+
+    private String buildAccountLockedText(AdminUser adminUser, int maxAttempts) {
+        String fullName = safe(adminUser.getFirstName()) + (safe(adminUser.getLastName()).isBlank() ? "" : " " + safe(adminUser.getLastName()));
+        String displayName = fullName.isBlank() ? adminUser.getUsername() : fullName.trim();
+
+        return """
+                Hello %s,
+
+                Your admin account has been locked after %d failed login attempts.
+
+                Please contact your administrator to reopen your account before trying again.
+                If this was not you, notify your administrator immediately.
+                """.formatted(displayName, maxAttempts);
     }
 
     private String safe(String value) {
