@@ -87,6 +87,34 @@ class AuthControllerTests {
     }
 
     @Test
+    void warningLoginReturnsFailedAttemptWarning() {
+        when(adminUserLoginOtpService.initiateOtpLogin("alice", "wrong-password"))
+                .thenReturn(AdminUserLoginOtpService.LoginInitiationResult.invalidCredentialsWarning());
+
+        ResponseEntity<?> response = authController.login(new AuthController.LoginRequest("alice", "wrong-password"));
+
+        assertEquals(401, response.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertNotNull(body);
+        assertEquals(1, body.get("attemptsRemaining"));
+    }
+
+    @Test
+    void lockedLoginReturnsDedicatedLockedResponse() {
+        when(adminUserLoginOtpService.initiateOtpLogin("alice", "wrong-password"))
+                .thenReturn(AdminUserLoginOtpService.LoginInitiationResult.accountLocked());
+
+        ResponseEntity<?> response = authController.login(new AuthController.LoginRequest("alice", "wrong-password"));
+
+        assertEquals(423, response.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertNotNull(body);
+        assertEquals(true, body.get("accountLocked"));
+    }
+
+    @Test
     void requiredPasswordChangeUsesUsernameFromChallengeToken() {
         String token = jwtTokenService.createPasswordChangeToken("alice", "first_login");
 
