@@ -11,6 +11,8 @@ public record AdminUserResponse(
         String title,
         String department,
         boolean enabled,
+        boolean accountLocked,
+        int failedLoginAttempts,
         Instant createdAt,
         Instant updatedAt
 ) {
