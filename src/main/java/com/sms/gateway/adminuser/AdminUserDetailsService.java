@@ -22,7 +22,7 @@ public class AdminUserDetailsService implements UserDetailsService {
 
         return User.withUsername(admin.getUsername())
                 .password(admin.getPasswordHash())
-                .disabled(!admin.isEnabled())
+            .disabled(!admin.isEnabled() || admin.isAccountLocked())
                 .roles("ADMIN")
                 .build();
     }
