@@ -46,12 +46,20 @@ public class AdminUserLoginOtpService {
         }
 
         AdminUser user = adminUserRepository.findByUsernameIgnoreCase(username.trim()).orElse(null);
-        if (user == null || !passwordEncoder.matches(password, user.getPasswordHash())) {
+        if (user == null) {
             return LoginInitiationResult.invalidCredentials();
         }
         if (!user.isEnabled()) {
             return LoginInitiationResult.accountDisabled();
         }
+        if (user.isAccountLocked()) {
+            return LoginInitiationResult.accountLocked();
+        }
+        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+            return registerFailedAttempt(user);
+        }
+
+        resetFailedAttemptsIfNeeded(user);
 
         AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(user);
         if (passwordStatus.blocksAuthentication()) {
@@ -99,6 +107,9 @@ public class AdminUserLoginOtpService {
         }
         if (!user.isEnabled()) {
             return OtpVerificationResult.accountDisabled();
+        }
+        if (user.isAccountLocked()) {
+            return OtpVerificationResult.accountLocked();
         }
 
         AdminPasswordPolicyService.PasswordStatus passwordStatus = adminPasswordPolicyService.evaluate(user);
@@ -179,6 +190,10 @@ public class AdminUserLoginOtpService {
             return new OtpVerificationResult(Status.ACCOUNT_DISABLED, null);
         }
 
+        public static OtpVerificationResult accountLocked() {
+            return new OtpVerificationResult(Status.ACCOUNT_LOCKED, null);
+        }
+
         public static OtpVerificationResult invalid() {
             return new OtpVerificationResult(Status.INVALID, null);
         }
@@ -201,8 +216,16 @@ public class AdminUserLoginOtpService {
             return new LoginInitiationResult(Status.INVALID, null, null);
         }
 
+        public static LoginInitiationResult invalidCredentialsWarning() {
+            return new LoginInitiationResult(Status.INVALID_WARNING, null, null);
+        }
+
         public static LoginInitiationResult accountDisabled() {
             return new LoginInitiationResult(Status.ACCOUNT_DISABLED, null, null);
+        }
+
+        public static LoginInitiationResult accountLocked() {
+            return new LoginInitiationResult(Status.ACCOUNT_LOCKED, null, null);
         }
 
         public static LoginInitiationResult blocked(AdminPasswordPolicyService.PasswordStatus passwordStatus) {
@@ -218,8 +241,40 @@ public class AdminUserLoginOtpService {
         PASSWORD_CHANGE_REQUIRED,
         PASSWORD_EXPIRED,
         ACCOUNT_DISABLED,
+        ACCOUNT_LOCKED,
+        INVALID_WARNING,
         INVALID,
         EXPIRED,
         TOO_MANY_ATTEMPTS
+    }
+
+    private LoginInitiationResult registerFailedAttempt(AdminUser user) {
+        int maxAttempts = Math.max(1, securityProperties.getAdmin().getMaxFailedLoginAttempts());
+        int attempts = user.getFailedLoginAttempts() + 1;
+        user.setFailedLoginAttempts(attempts);
+
+        if (attempts >= maxAttempts) {
+            user.setAccountLocked(true);
+            user.setAccountLockedAt(Instant.now());
+            adminUserRepository.save(user);
+            adminUserEmailService.sendAccountLockedEmail(user, maxAttempts);
+            return LoginInitiationResult.accountLocked();
+        }
+
+        adminUserRepository.save(user);
+        if (attempts == maxAttempts - 1) {
+            return LoginInitiationResult.invalidCredentialsWarning();
+        }
+        return LoginInitiationResult.invalidCredentials();
+    }
+
+    private void resetFailedAttemptsIfNeeded(AdminUser user) {
+        if (user.getFailedLoginAttempts() == 0 && !user.isAccountLocked() && user.getAccountLockedAt() == null) {
+            return;
+        }
+        user.setFailedLoginAttempts(0);
+        user.setAccountLocked(false);
+        user.setAccountLockedAt(null);
+        adminUserRepository.save(user);
     }
 }
