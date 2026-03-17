@@ -46,8 +46,18 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest req) {
         var initiation = adminUserLoginOtpService.initiateOtpLogin(req.username(), req.password());
+        if (initiation.status() == AdminUserLoginOtpService.Status.ACCOUNT_LOCKED) {
+            return buildLockedAccountResponse("This admin account has been locked after multiple failed login attempts. Please contact your administrator to reopen it.");
+        }
         if (initiation.status() == AdminUserLoginOtpService.Status.ACCOUNT_DISABLED) {
             return buildDisabledAccountResponse("This admin account has been disabled. Please contact your administrator.");
+        }
+        if (initiation.status() == AdminUserLoginOtpService.Status.INVALID_WARNING) {
+            return ResponseEntity.status(401).body(Map.of(
+                    "error", "Invalid credentials",
+                    "warning", "If we receive 3 failed attempts, your account will be blocked.",
+                    "attemptsRemaining", 1
+            ));
         }
         if (initiation.status() == AdminUserLoginOtpService.Status.INVALID) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
@@ -73,6 +83,9 @@ public class AuthController {
     @PostMapping("/login/verify-otp")
     public ResponseEntity<?> verifyLoginOtp(@RequestBody @Valid VerifyLoginOtpRequest req) {
         var verification = adminUserLoginOtpService.verifyOtpAndGetUser(req.username(), req.otp());
+        if (verification.status() == AdminUserLoginOtpService.Status.ACCOUNT_LOCKED) {
+            return buildLockedAccountResponse("This admin account has been locked after multiple failed login attempts. Please contact your administrator to reopen it.");
+        }
         if (verification.status() == AdminUserLoginOtpService.Status.ACCOUNT_DISABLED) {
             return buildDisabledAccountResponse("This admin account has been disabled. Please contact your administrator.");
         }
@@ -122,6 +135,9 @@ public class AuthController {
             AdminUser user = adminUserRepository.findByUsernameIgnoreCase(username).orElse(null);
             if (user == null) {
                 return ResponseEntity.status(401).body(Map.of("error", "User invalid"));
+            }
+            if (user.isAccountLocked()) {
+                return buildLockedAccountResponse("This admin account has been locked after multiple failed login attempts. Please contact your administrator to reopen it.");
             }
             if (!user.isEnabled()) {
                 return buildDisabledAccountResponse("This admin account has been disabled. Please contact your administrator.");
@@ -224,6 +240,13 @@ public class AuthController {
         return ResponseEntity.status(403).body(Map.of(
                 "error", message,
                 "accountDisabled", true
+        ));
+    }
+
+    private ResponseEntity<?> buildLockedAccountResponse(String message) {
+        return ResponseEntity.status(423).body(Map.of(
+                "error", message,
+                "accountLocked", true
         ));
     }
 }
