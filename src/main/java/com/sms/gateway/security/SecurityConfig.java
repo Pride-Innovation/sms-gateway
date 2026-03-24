@@ -10,6 +10,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -50,12 +51,13 @@ public class SecurityConfig {
 
         http
                 .cors(Customizer.withDefaults())
+                .csrf(AbstractHttpConfigurer::disable)
+                /*
                 .csrf(csrf -> csrf
                                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                                // REST API is stateless/token or API-client auth; ignore CSRF here.
-//                        .ignoringRequestMatchers("/api/**", "/actuator/**")
                                 .ignoringRequestMatchers("/actuator/**")
                 )
+                 */
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(eh -> eh
                         .authenticationEntryPoint(new RestAuthenticationEntryPoint(objectMapper))
