@@ -23,6 +23,8 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
             throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        // manually set error code
+        response.setStatus(401);
         objectMapper.writeValue(response.getOutputStream(),
                 Map.of(
                         "error", "Unauthorized",

@@ -51,10 +51,10 @@ public class SecurityConfig {
         http
                 .cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        // REST API is stateless/token or API-client auth; ignore CSRF here.
+                                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                                // REST API is stateless/token or API-client auth; ignore CSRF here.
 //                        .ignoringRequestMatchers("/api/**", "/actuator/**")
-                        .ignoringRequestMatchers("/actuator/**")
+                                .ignoringRequestMatchers("/actuator/**")
                 )
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(eh -> eh
@@ -84,8 +84,8 @@ public class SecurityConfig {
                         // Everything else requires authentication
                         .anyRequest().authenticated()
                 )
-                        // Capture request metadata once so DB revisions can include request context.
-                        .addFilterBefore(auditRequestContextFilter, UsernamePasswordAuthenticationFilter.class)
+                // Capture request metadata once so DB revisions can include request context.
+                .addFilterBefore(auditRequestContextFilter, UsernamePasswordAuthenticationFilter.class)
                 // Allow POST method tunneling (X-HTTP-Method-Override) for selected API paths.
                 .addFilterBefore(methodOverrideHeaderFilter, UsernamePasswordAuthenticationFilter.class)
                 // Ensure API client auth runs for /api/sms/** before authorization

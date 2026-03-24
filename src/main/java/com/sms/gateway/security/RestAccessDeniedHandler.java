@@ -24,6 +24,8 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
             throws IOException, ServletException {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        // set error code manually
+        response.setStatus(404);
         objectMapper.writeValue(response.getOutputStream(),
                 Map.of(
                         "error", "Forbidden",
