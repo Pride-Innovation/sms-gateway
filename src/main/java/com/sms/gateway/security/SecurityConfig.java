@@ -6,6 +6,7 @@ import com.sms.gateway.users.ApiClientService;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -52,7 +53,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         // REST API is stateless/token or API-client auth; ignore CSRF here.
-                        .ignoringRequestMatchers("/api/**", "/actuator/**")
+//                        .ignoringRequestMatchers("/api/**", "/actuator/**")
+                        .ignoringRequestMatchers("/actuator/**")
                 )
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(eh -> eh
@@ -61,6 +63,7 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(auth -> auth
                         // Health endpoints (keep minimal)
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         // Public auth endpoints
                         .requestMatchers(
@@ -69,7 +72,8 @@ public class SecurityConfig {
                                 "/api/auth/change-password/required",
                                 "/api/auth/refresh",
                                 "/api/auth/forgot-password",
-                                "/api/auth/reset-password"
+                                "/api/auth/reset-password",
+                                "/api/auth/csrf"
                         ).permitAll()
                         // Authenticated user password change
                         .requestMatchers("/api/auth/change-password").hasRole("ADMIN")
