@@ -7,156 +7,244 @@ import com.cloudhopper.smpp.SmppConstants;
 import com.cloudhopper.smpp.SmppSession;
 import com.cloudhopper.smpp.SmppSessionConfiguration;
 import com.cloudhopper.smpp.impl.DefaultSmppClient;
+import com.cloudhopper.smpp.impl.DefaultSmppSessionHandler;
 import com.cloudhopper.smpp.pdu.PduRequest;
 import com.cloudhopper.smpp.pdu.PduResponse;
 import com.cloudhopper.smpp.pdu.SubmitSm;
 import com.cloudhopper.smpp.pdu.SubmitSmResp;
 import com.sms.gateway.config.SmppProperties;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import org.springframework.context.annotation.Primary;
-import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Primary;
+import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * SMPP session pool / connection manager for Cloudhopper.
- * <p>
- * What this class does:
- * - Creates N independent SMPP sessions to the SMSC (Airtel) based on SmppProperties.
- * - Keeps sessions alive across requests (production behavior).
- * - Selects a session using round-robin.
- * - Sends submit_sm and awaits submit_sm_resp (with compatibility across Cloudhopper variants).
- * - Provides a couple of SMPP payload helpers (UCS-2 encoding, concatenation UDH).
- * <p>
- * Why this exists:
- * - SMPP connections are stateful and expensive to create (TCP connect + bind).
- * - Production gateways should re-use sessions and control in-flight window size.
- * - Cloudhopper versions differ: some return WindowFuture that is also a Future, others don’t.
- * <p>
- * Key operational notes:
- * - A SubmitSmResp with commandStatus != 0 means the SMSC REJECTED the message.
- * You must treat that as failure (e.g., 0x0000000A “Source address invalid”).
- * - This class does not implement retries/backoff/persistence; those belong in your service layer.
  */
 @Component("mtnSmppSessionManager")
 @Primary
 public class SmppSessionManager {
     private static final Logger log = LoggerFactory.getLogger(SmppSessionManager.class);
+    // Bind retries must never hammer the provider in a tight loop after a network or credential failure.
+    // We start with a short delay and then grow it with exponential backoff plus jitter.
+    private static final long MIN_BACKOFF_MS = 1_000L;
+    private static final long MAX_BACKOFF_MS = TimeUnit.MINUTES.toMillis(5);
 
-    /**
-     * Spring-bound configuration: host/port/systemId/password, bindType, timeouts, window size, etc.
-     */
+    // Spring-bound provider configuration for one SMPP target (MTN or Airtel).
     private final SmppProperties props;
-
-    /**
-     * Round-robin counter used by selectSession().
-     * Atomic to avoid contention and be safe under concurrent sends.
-     */
+    // Clock is injected through the test constructor so retry and idle timing can be verified deterministically.
+    private final Clock clock;
+    // A dedicated scheduler keeps session health management separate from SMS dispatch worker threads.
+    private final ScheduledExecutorService healthCheckExecutor;
+    // Metrics are tagged with the SMPP target so operations can distinguish MTN from Airtel in Prometheus.
+    private final String metricTarget;
+    private final Counter bindAttemptsCounter;
+    private final Counter bindSuccessCounter;
+    private final Counter bindFailureCounter;
+    private final Counter rebindCounter;
+    private final Counter healthCheckCounter;
+    private final Counter unexpectedCloseCounter;
+    // Round-robin spreads outbound submits across the configured SMPP sessions for a provider.
     private final AtomicInteger rr = new AtomicInteger(0);
-
-    /**
-     * Session holders built at startup.
-     * After start(), this is read-only (no additions/removals) until stop().
-     */
     private final List<SessionHolder> sessions = new ArrayList<>();
 
-    public SmppSessionManager(SmppProperties props) {
-        this.props = props;
+    @Autowired
+    public SmppSessionManager(SmppProperties props, MeterRegistry meterRegistry) {
+        // Runtime constructor used by Spring. The extra constructor below exists only so tests can
+        // inject a fake clock and scheduler without changing production behavior.
+        this(props, meterRegistry, Clock.systemUTC(), newHealthCheckExecutor());
     }
 
-    /**
-     * Spring lifecycle: create and bind sessions when the application starts.
-     * <p>
-     * - If bind fails, we log and keep going (service can still start; sending will try to rebind).
-     * - sessions count is clamped to >= 1 to avoid modulo by zero in selectSession().
-     */
+    SmppSessionManager(
+            SmppProperties props,
+            MeterRegistry meterRegistry,
+            Clock clock,
+            ScheduledExecutorService healthCheckExecutor
+    ) {
+        this.props = props;
+        this.clock = clock;
+        this.healthCheckExecutor = healthCheckExecutor;
+        this.metricTarget = buildMetricTarget(props);
+        this.bindAttemptsCounter = Counter.builder("sms.smpp.bind.attempts")
+                .tag("target", metricTarget)
+                .register(meterRegistry);
+        this.bindSuccessCounter = Counter.builder("sms.smpp.bind.success")
+                .tag("target", metricTarget)
+                .register(meterRegistry);
+        this.bindFailureCounter = Counter.builder("sms.smpp.bind.failure")
+                .tag("target", metricTarget)
+                .register(meterRegistry);
+        this.rebindCounter = Counter.builder("sms.smpp.rebind.requests")
+                .tag("target", metricTarget)
+                .register(meterRegistry);
+        this.healthCheckCounter = Counter.builder("sms.smpp.health.checks")
+                .tag("target", metricTarget)
+                .register(meterRegistry);
+        this.unexpectedCloseCounter = Counter.builder("sms.smpp.channel.unexpected_close")
+                .tag("target", metricTarget)
+                .register(meterRegistry);
+    }
+
     @PostConstruct
     public void start() {
         int count = Math.max(1, props.getSessions());
         for (int i = 0; i < count; i++) {
             SessionHolder holder = new SessionHolder("smpp-" + (i + 1));
             sessions.add(holder);
+            // Bind once at startup so the application begins with warm SMPP sessions instead of
+            // paying connect+bind cost on the first outbound message.
             holder.ensureBound();
         }
-        log.info("SMPP manager started sessions={}", sessions.size());
+        startHealthChecks();
+        log.info("SMPP manager started target={} sessions={}", metricTarget, sessions.size());
     }
 
-    /**
-     * Spring lifecycle: shutdown hook.
-     * <p>
-     * This is the ONLY place we destroy sessions/clients/executors in production.
-     * Sessions should NOT be torn down per request.
-     */
     @PreDestroy
     public void stop() {
-        for (SessionHolder s : sessions) {
+        healthCheckExecutor.shutdownNow();
+        for (SessionHolder holder : sessions) {
             try {
-                s.close();
+                holder.close();
             } catch (Exception ignore) {
-                // best-effort shutdown
             }
         }
         sessions.clear();
-        log.info("SMPP manager stopped");
+        log.info("SMPP manager stopped target={}", metricTarget);
     }
 
-    /**
-     * Sends a SubmitSm through a selected session and waits for SubmitSmResp.
-     * <p>
-     * Production behavior:
-     * - No try-with-resources around the holder (we do NOT close it per send).
-     * - Sessions are persistent and reused for throughput and stability.
-     *
-     * @param sm        the SubmitSm to send (must be populated by caller: src/dst/body/UDH/data_coding/etc.)
-     * @param timeoutMs max time to wait for submit_sm_resp
-     * @return SubmitSmResp (caller must check getCommandStatus() == 0 for success)
-     */
     public SubmitSmResp send(SubmitSm sm, long timeoutMs) throws Exception {
         Objects.requireNonNull(sm, "SubmitSm must not be null");
-        SessionHolder holder = selectSession();
-        return holder.send(sm, timeoutMs);
+        return selectSession().send(sm, timeoutMs);
     }
 
-    /**
-     * Helper for UCS-2 encoding (UTF-16BE).
-     * Typically used for Unicode SMS.
-     * <p>
-     * IMPORTANT: Encoding bytes is not enough; your SubmitSm must also set data_coding to UCS-2 (0x08).
-     */
     public byte[] encodeUcs2(String text) {
         String safe = (text == null) ? "" : text;
         return CharsetUtil.encode(safe, CharsetUtil.CHARSET_UCS_2);
     }
 
-    /**
-     * Builds 8-bit concatenation UDH for multipart SMS.
-     * <p>
-     * Wire format:
-     * 05 00 03 <ref> <totalParts> <partNumber>
-     * <p>
-     * - ref: same across all segments of a message
-     * - total: total number of segments
-     * - seq: 1-based segment index (1…total)
-     * <p>
-     * NOTE: Parameter order is (total, seq, ref) but wire order is (ref, total, seq).
-     * This is correct but easy to misread—keep it in mind when calling it.
-     */
     public byte[] buildConcatenationUdh8bit(byte total, byte seq, byte ref) {
         return new byte[]{0x05, 0x00, 0x03, ref, total, seq};
     }
 
-    /**
-     * Round-robin selection.
-     * Uses floorMod to avoid negative indices when the counter overflows.
-     */
+    public SmppManagerHealthSnapshot healthSnapshot() {
+        // Actuator health and operational diagnostics use this snapshot rather than reading internal
+        // fields directly. That keeps the health endpoint consistent and safe to expose.
+        List<SmppSessionHealthSnapshot> sessionSnapshots = new ArrayList<>();
+        int boundSessions = 0;
+
+        for (SessionHolder holder : sessions) {
+            SmppSessionHealthSnapshot snapshot = holder.snapshot();
+            sessionSnapshots.add(snapshot);
+            if (snapshot.bound()) {
+                boundSessions++;
+            }
+        }
+
+        boolean started = !sessions.isEmpty();
+        boolean up = started && boundSessions == sessions.size();
+        return new SmppManagerHealthSnapshot(metricTarget, started, sessions.size(), boundSessions, up, sessionSnapshots);
+    }
+
+    void runHealthChecksNow() {
+        runHealthChecks();
+    }
+
+    void markSessionForRebind(int sessionIndex) {
+        if (sessionIndex < 0 || sessionIndex >= sessions.size()) {
+            throw new IllegalArgumentException("Invalid session index: " + sessionIndex);
+        }
+        sessions.get(sessionIndex).markForRebind();
+    }
+
+    protected DefaultSmppClient createClient(ExecutorService clientExecutor) {
+        return new DefaultSmppClient(clientExecutor, 1);
+    }
+
+    protected SmppSession bind(DefaultSmppClient client, SmppSessionConfiguration cfg, DefaultSmppSessionHandler handler) throws Exception {
+        return client.bind(cfg, handler);
+    }
+
+    protected long applyJitter(long delayMs) {
+        if (delayMs <= MIN_BACKOFF_MS) {
+            return delayMs;
+        }
+        // Jitter avoids synchronized retry storms when multiple sessions or instances fail together.
+        double factor = ThreadLocalRandom.current().nextDouble(0.8d, 1.21d);
+        return Math.max(MIN_BACKOFF_MS, Math.round(delayMs * factor));
+    }
+
+    private static ScheduledExecutorService newHealthCheckExecutor() {
+        return Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setName("smpp-health-check");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    private static String buildMetricTarget(SmppProperties props) {
+        String systemId = (props.getSystemId() == null || props.getSystemId().isBlank()) ? "unknown" : props.getSystemId().trim();
+        String host = (props.getHost() == null || props.getHost().isBlank()) ? "unknown" : props.getHost().trim();
+        return systemId + "@" + host + ":" + props.getPort();
+    }
+
+    private Instant now() {
+        return Instant.now(clock);
+    }
+
+    private void startHealthChecks() {
+        long intervalMs = Math.max(MIN_BACKOFF_MS, props.getHealthCheckIntervalMs());
+        // The health task drives three behaviors:
+        // 1) bind missing/unbound sessions,
+        // 2) recover sessions whose channel was closed unexpectedly,
+        // 3) perform the MTN-requested fresh rebind after an idle interval.
+        healthCheckExecutor.scheduleWithFixedDelay(
+                this::runHealthChecks,
+                intervalMs,
+                intervalMs,
+                TimeUnit.MILLISECONDS
+        );
+        log.info("SMPP health checks scheduled target={} intervalMs={} forceRebindIntervalMs={}",
+                metricTarget, intervalMs, props.getForceRebindIntervalMs());
+    }
+
+    private void runHealthChecks() {
+        healthCheckCounter.increment();
+        for (SessionHolder holder : sessions) {
+            try {
+                // Each holder decides whether it needs an immediate recovery bind, an idle-time rebind,
+                // or no action at all. That decision stays local to the session state.
+                holder.ensureHealthy();
+            } catch (Exception e) {
+                log.warn("SMPP health check failed target={} name={} reason={}", metricTarget, holder.name, e.getMessage());
+            }
+        }
+    }
+
     private SessionHolder selectSession() {
         if (sessions.isEmpty()) {
             throw new IllegalStateException("SMPP manager not started (no sessions)");
@@ -165,10 +253,6 @@ public class SmppSessionManager {
         return sessions.get(idx);
     }
 
-    /**
-     * Maps config string to Cloudhopper SmppBindType.
-     * Default to TRANSCEIVER since it supports submit + inbound PDUs (DLR, enquire_link, etc).
-     */
     private SmppBindType parseBindType(String s) {
         String v = (s == null) ? "" : s.trim().toUpperCase();
         return switch (v) {
@@ -178,25 +262,10 @@ public class SmppSessionManager {
         };
     }
 
-    /**
-     * Determines SMPP interface version. Cloudhopper expects a byte constant.
-     * <p>
-     * Current implementation always returns SMPP 3.4 (most common).
-     * If you need to support other versions, map props.getInterfaceVersion() accordingly.
-     */
-    private byte interfaceVersion(int v) {
+    private byte interfaceVersion(int ignored) {
         return SmppConstants.VERSION_3_4;
     }
 
-    /**
-     * Reflection-based setter invocation to stay compatible with different Cloudhopper builds.
-     * <p>
-     * Problem:
-     * - Method names / signatures differ across versions (e.g. setEnquireLinkInterval(int) vs *Millis(long)).
-     * <p>
-     * Tradeoff:
-     * - This compiles across versions, but you lose compile-time verification.
-     */
     private static void tryInvokeSetter(Object target, String methodName, Class<?> argType, Object argValue) {
         try {
             Method m = target.getClass().getMethod(methodName, argType);
@@ -205,19 +274,6 @@ public class SmppSessionManager {
         }
     }
 
-    /**
-     * Waits for a WindowFuture response in a way that is tolerant of Cloudhopper version differences.
-     * <p>
-     * Strategy:
-     * 1) If WindowFuture is also a java.util.concurrent.Future, call get(timeout).
-     * 2) Otherwise, call an "await" variant (await(timeoutMillis) or await(timeout, unit) or await()).
-     * 3) Then retrieve the response using a getter method that exists in that version.
-     * 4) If no response, attempt to retrieve and throw the underlying cause.
-     * <p>
-     * Timeout behavior:
-     * - If the version does not support timed await and only has await() with no timeout,
-     * we may block indefinitely. Prefer a Cloudhopper build that supports timed waiting.
-     */
     private static PduResponse awaitWindowResponse(WindowFuture<?, ?, ?> wf, long timeoutMs) throws Exception {
         if (wf instanceof Future<?> f) {
             Object r = f.get(timeoutMs, TimeUnit.MILLISECONDS);
@@ -225,20 +281,16 @@ public class SmppSessionManager {
         }
 
         boolean completed = false;
-
-        // Try: await(long timeoutMillis)
         try {
             Method await = wf.getClass().getMethod("await", long.class);
             Object ok = await.invoke(wf, timeoutMs);
             completed = !(ok instanceof Boolean) || (Boolean) ok;
         } catch (NoSuchMethodException ignore) {
-            // Try: await(long timeout, TimeUnit unit)
             try {
                 Method await = wf.getClass().getMethod("await", long.class, TimeUnit.class);
                 Object ok = await.invoke(wf, timeoutMs, TimeUnit.MILLISECONDS);
                 completed = !(ok instanceof Boolean) || (Boolean) ok;
             } catch (NoSuchMethodException ignore2) {
-                // Last resort: await() (no timeout)
                 Method await = wf.getClass().getMethod("await");
                 await.invoke(wf);
                 completed = true;
@@ -249,25 +301,29 @@ public class SmppSessionManager {
             throw new TimeoutException("Timed out waiting for SMPP response");
         }
 
-        // Response getter names vary by build/version.
         Object respObj = null;
         for (String getter : new String[]{"getResponse", "getPduResponse", "getResult"}) {
             try {
                 Method m = wf.getClass().getMethod(getter);
                 respObj = m.invoke(wf);
-                if (respObj != null) break;
+                if (respObj != null) {
+                    break;
+                }
             } catch (NoSuchMethodException ignore) {
             }
         }
-        if (respObj instanceof PduResponse pr) return pr;
+        if (respObj instanceof PduResponse pr) {
+            return pr;
+        }
 
-        // If no response, attempt to surface the root cause.
         Object causeObj = null;
         for (String getter : new String[]{"getCause", "getException", "getFailureCause"}) {
             try {
                 Method m = wf.getClass().getMethod(getter);
                 causeObj = m.invoke(wf);
-                if (causeObj != null) break;
+                if (causeObj != null) {
+                    break;
+                }
             } catch (NoSuchMethodException ignore) {
             }
         }
@@ -278,42 +334,77 @@ public class SmppSessionManager {
         throw new IllegalStateException("No SMPP response available (and no cause exposed by WindowFuture)");
     }
 
-    /**
-     * One SMPP connection wrapper.
-     * <p>
-     * Contains:
-     * - per-holder executor (threads named for easier diagnosis)
-     * - DefaultSmppClient (used to bind)
-     * - SmppSession (actual bound connection)
-     * <p>
-     * Thread safety:
-     * - ensureBound() and close() synchronized on lock to avoid double binds/destroys.
-     * - session is volatile so send() sees the latest bound session after ensureBound().
-     */
+    public record SmppManagerHealthSnapshot(
+            String target,
+            boolean started,
+            int totalSessions,
+            int boundSessions,
+            boolean up,
+            List<SmppSessionHealthSnapshot> sessions
+    ) {
+        public Map<String, Object> toHealthDetails() {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("target", target);
+            details.put("started", started);
+            details.put("totalSessions", totalSessions);
+            details.put("boundSessions", boundSessions);
+            details.put("up", up);
+            details.put("sessions", sessions.stream().map(SmppSessionHealthSnapshot::toMap).toList());
+            return details;
+        }
+    }
+
+    public record SmppSessionHealthSnapshot(
+            String name,
+            String state,
+            boolean bound,
+            Instant lastBoundAt,
+            Instant lastActivityAt,
+            Instant nextBindAttemptAt,
+            int consecutiveBindFailures,
+            int activeSendCount,
+            String lastBindFailureReason
+    ) {
+        public Map<String, Object> toMap() {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("name", name);
+            details.put("state", state);
+            details.put("bound", bound);
+            details.put("lastBoundAt", lastBoundAt);
+            details.put("lastActivityAt", lastActivityAt);
+            details.put("nextBindAttemptAt", nextBindAttemptAt);
+            details.put("consecutiveBindFailures", consecutiveBindFailures);
+            details.put("activeSendCount", activeSendCount);
+            details.put("lastBindFailureReason", lastBindFailureReason);
+            return details;
+        }
+    }
+
     private final class SessionHolder {
         private final String name;
         private final Object lock = new Object();
-
-        /**
-         * Executor used by Cloudhopper client/session for background work.
-         * Daemon threads prevent hanging JVM shutdown if something leaks.
-         */
+        // Cloudhopper uses its own executor for IO/callback work for this specific session holder.
         private final ExecutorService clientExecutor;
 
-        /**
-         * Cloudhopper client; created lazily on first bind attempt.
-         */
         private DefaultSmppClient client;
-
-        /**
-         * Active bound session (or null if never bound / bind failed).
-         */
         private volatile SmppSession session;
+        // lastBoundAt tracks when the current bind became active.
+        private volatile Instant lastBoundAt;
+        // lastActivityAt is updated on outbound sends and inbound PDUs so forced rebind is based on idleness,
+        // not simply elapsed wall-clock time since startup.
+        private volatile Instant lastActivityAt;
+        // After a bind failure we wait until nextBindAttemptAt before trying again.
+        private volatile Instant nextBindAttemptAt;
+        private volatile String lastBindFailureReason;
+        // This flag is raised when Cloudhopper reports an unexpected channel close.
+        private volatile boolean rebindRequested;
+        // Consecutive failures feed the exponential backoff calculation.
+        private volatile int consecutiveBindFailures;
+        // Active sends are tracked so an idle-time rebind does not interrupt live traffic.
+        private final AtomicInteger activeSendCount = new AtomicInteger(0);
 
-        SessionHolder(String name) {
+        private SessionHolder(String name) {
             this.name = name;
-
-            // Create executor AFTER name assignment, so thread naming is stable.
             this.clientExecutor = Executors.newCachedThreadPool(r -> {
                 Thread t = new Thread(r);
                 t.setName(this.name + "-client");
@@ -322,19 +413,24 @@ public class SmppSessionManager {
             });
         }
 
-        /**
-         * Ensures an SMPP bind exists.
-         * <p>
-         * What happens on failures:
-         * - We log and keep the manager alive.
-         * - The next send() will try again (no backoff here; implement backoff in production if needed).
-         */
         void ensureBound() {
             synchronized (lock) {
-                if (session != null && session.isBound()) return;
+                if (session != null && session.isBound()) {
+                    return;
+                }
+
+                Instant current = now();
+                if (nextBindAttemptAt != null && current.isBefore(nextBindAttemptAt)) {
+                    // Backoff is enforced here so a bad network or bad credential set does not cause
+                    // every health check or every send attempt to hammer the SMSC.
+                    return;
+                }
 
                 try {
-                    if (client == null) client = new DefaultSmppClient(clientExecutor, 1);
+                    bindAttemptsCounter.increment();
+                    if (client == null) {
+                        client = createClient(clientExecutor);
+                    }
 
                     SmppSessionConfiguration cfg = new SmppSessionConfiguration();
                     cfg.setName(name);
@@ -345,122 +441,244 @@ public class SmppSessionManager {
                     cfg.setPassword(props.getPassword());
                     cfg.setSystemType(props.getSystemType() == null ? "" : props.getSystemType());
                     cfg.setInterfaceVersion(interfaceVersion(props.getInterfaceVersion()));
-
-                    // Connection and SMPP timing:
                     cfg.setConnectTimeout(props.getConnectTimeoutMs());
                     cfg.setBindTimeout(props.getBindTimeoutMs());
-
-                    // Windowing controls in-flight requests and protects session:
-                    // - windowSize = max concurrent in-flight PDUs (submit_sm etc.)
-                    // - requestExpiryTimeout = max lifetime before Cloudhopper expires it
                     cfg.setRequestExpiryTimeout(props.getRequestExpiryTimeoutMs());
                     cfg.setWindowSize(props.getWindowSize());
                     cfg.setWindowWaitTimeout(props.getRequestExpiryTimeoutMs());
 
-                    // Keep alive (enquire_link) interval; reflective setters for version tolerance.
                     int enquireMs = props.getEnquireLinkIntervalMs();
                     tryInvokeSetter(cfg, "setEnquireLinkInterval", int.class, enquireMs);
                     tryInvokeSetter(cfg, "setEnquireLinkInterval", long.class, (long) enquireMs);
                     tryInvokeSetter(cfg, "setEnquireLinkIntervalMillis", int.class, enquireMs);
                     tryInvokeSetter(cfg, "setEnquireLinkIntervalMillis", long.class, (long) enquireMs);
 
-                    // Bind and attach a handler for inbound PDUs (DLRs, etc.)
-                    this.session = client.bind(cfg, new SimpleSessionHandler(name));
+                    // A successful bind resets all recovery state and marks the session as recently active.
+                    this.session = bind(client, cfg, new SimpleSessionHandler(this));
+                    this.lastBoundAt = current;
+                    this.lastActivityAt = current;
+                    this.nextBindAttemptAt = null;
+                    this.lastBindFailureReason = null;
+                    this.rebindRequested = false;
+                    this.consecutiveBindFailures = 0;
+                    bindSuccessCounter.increment();
 
-                    log.info("SMPP bound name={} bindType={} windowSize={}", name, cfg.getType(), cfg.getWindowSize());
-
+                    log.info("SMPP bound target={} name={} bindType={} windowSize={}", metricTarget, name, cfg.getType(), cfg.getWindowSize());
                 } catch (Exception e) {
-                    log.warn("SMPP bind failed name={} reason={}", name, e.getMessage());
+                    bindFailureCounter.increment();
+                    consecutiveBindFailures++;
+                    lastBindFailureReason = e.getMessage();
+                    // Backoff grows with each consecutive failure so the gateway backs away from the provider
+                    // instead of retrying continuously when the remote side is down or credentials are invalid.
+                    nextBindAttemptAt = current.plusMillis(computeBackoffDelayMs(consecutiveBindFailures));
+                    log.warn("SMPP bind failed target={} name={} failures={} nextAttemptAt={} reason={}",
+                            metricTarget, name, consecutiveBindFailures, nextBindAttemptAt, e.getMessage());
                 }
             }
         }
 
-        /**
-         * Sends submit_sm on the currently bound session and waits for submit_sm_resp.
-         * <p>
-         * Behavior:
-         * - Lazy rebind if session is not present or not bound.
-         * - Uses session windowing API (sendRequestPdu).
-         * - Converts WindowFuture into PduResponse in a version-tolerant way.
-         */
         SubmitSmResp send(SubmitSm sm, long timeoutMs) throws Exception {
             SmppSession s = session;
             if (s == null || !s.isBound()) {
+                // Sending is allowed to trigger recovery when the session is missing, but the bind path
+                // still respects backoff so request traffic does not become a retry loop.
                 ensureBound();
                 s = session;
                 if (s == null || !s.isBound()) {
-                    throw new IllegalStateException("SMPP session not bound (" + name + ")");
+                    throw new IllegalStateException(buildUnavailableMessage());
                 }
             }
 
-            // In some builds, this returns WindowFuture instead of a direct response.
-            WindowFuture<?, ?, ?> fut = s.sendRequestPdu(sm, timeoutMs, false);
-
-            PduResponse resp = awaitWindowResponse(fut, timeoutMs);
-
-            if (resp instanceof SubmitSmResp ssr) return ssr;
-            throw new IllegalStateException("Unexpected SMPP response type: " + (resp == null ? null : resp.getClass()));
+            activeSendCount.incrementAndGet();
+            markActivity();
+            try {
+                // Any successful send or inbound response updates activity time, which prevents the
+                // MTN-specific forced rebind from interrupting a healthy active link.
+                WindowFuture<?, ?, ?> fut = s.sendRequestPdu(sm, timeoutMs, false);
+                PduResponse resp = awaitWindowResponse(fut, timeoutMs);
+                markActivity();
+                if (resp instanceof SubmitSmResp ssr) {
+                    return ssr;
+                }
+                throw new IllegalStateException("Unexpected SMPP response type: " + (resp == null ? null : resp.getClass()));
+            } finally {
+                activeSendCount.decrementAndGet();
+            }
         }
 
-        /**
-         * Explicit shutdown. Intended to be called ONLY from SmppSessionManager.stop().
-         * <p>
-         * Destroys:
-         * - session: closes bind + underlying channel
-         * - client: cleans up resources
-         * - executor: stops threads
-         */
         void close() {
             synchronized (lock) {
+                destroySessionOnly();
                 try {
-                    if (session != null) session.destroy();
-                } catch (Exception ignore) {
-                }
-                session = null;
-
-                try {
-                    if (client != null) client.destroy();
+                    if (client != null) {
+                        client.destroy();
+                    }
                 } catch (Exception ignore) {
                 }
                 client = null;
-
+                lastBoundAt = null;
+                lastActivityAt = null;
+                nextBindAttemptAt = null;
+                lastBindFailureReason = null;
+                rebindRequested = false;
+                consecutiveBindFailures = 0;
                 clientExecutor.shutdownNow();
             }
         }
+
+        void ensureHealthy() {
+            synchronized (lock) {
+                RebindDecision decision = evaluateRebindNeed();
+                if (!decision.required()) {
+                    return;
+                }
+
+                if (decision.waitingForBackoff()) {
+                    return;
+                }
+
+                if (activeSendCount.get() > 0 && decision.idleRebind()) {
+                    // MTN asked for a fresh rebind after idle time. We intentionally skip that rebind while
+                    // a message is actively sending so we do not tear down a healthy live session mid-flight.
+                    return;
+                }
+
+                if (session != null) {
+                    log.info("SMPP rebind requested target={} name={} reason={}", metricTarget, name, decision.reason());
+                }
+
+                rebindCounter.increment();
+                destroySessionOnly();
+                ensureBound();
+            }
+        }
+
+        SmppSessionHealthSnapshot snapshot() {
+            synchronized (lock) {
+                return new SmppSessionHealthSnapshot(
+                        name,
+                        currentState(),
+                        session != null && session.isBound(),
+                        lastBoundAt,
+                        lastActivityAt,
+                        nextBindAttemptAt,
+                        consecutiveBindFailures,
+                        activeSendCount.get(),
+                        lastBindFailureReason
+                );
+            }
+        }
+
+        void markForRebind() {
+            synchronized (lock) {
+                rebindRequested = true;
+            }
+            unexpectedCloseCounter.increment();
+        }
+
+        private void markActivity() {
+            lastActivityAt = now();
+        }
+
+        private String buildUnavailableMessage() {
+            Instant nextAttempt = nextBindAttemptAt;
+            if (nextAttempt == null) {
+                return "SMPP session not bound (" + name + ")";
+            }
+            long retryInMs = Math.max(0L, Duration.between(now(), nextAttempt).toMillis());
+            return "SMPP session not bound (" + name + "), next bind attempt in " + retryInMs + "ms";
+        }
+
+        private String currentState() {
+            if (session != null && session.isBound()) {
+                if (rebindRequested) {
+                    return "REBIND_REQUESTED";
+                }
+                if (isIdleRebindDue()) {
+                    return "IDLE_REBIND_DUE";
+                }
+                return "BOUND";
+            }
+            if (nextBindAttemptAt != null && now().isBefore(nextBindAttemptAt)) {
+                return "WAITING_TO_RETRY";
+            }
+            return "UNBOUND";
+        }
+
+        private RebindDecision evaluateRebindNeed() {
+            Instant current = now();
+            if (session == null || !session.isBound()) {
+                boolean waitingForBackoff = nextBindAttemptAt != null && current.isBefore(nextBindAttemptAt);
+                return new RebindDecision(true, waitingForBackoff, false, waitingForBackoff ? "backoff" : "session-unbound");
+            }
+            if (rebindRequested) {
+                // Unexpected channel close is treated as a hard recovery signal and does not depend on idleness.
+                return new RebindDecision(true, false, false, "channel-closed");
+            }
+            if (isIdleRebindDue()) {
+                // This is the MTN-driven behavior: rebind only after the session has been idle long enough.
+                return new RebindDecision(true, false, true, "idle-rebind-interval");
+            }
+            return new RebindDecision(false, false, false, "healthy");
+        }
+
+        private boolean isIdleRebindDue() {
+            long forceRebindIntervalMs = props.getForceRebindIntervalMs();
+            if (forceRebindIntervalMs <= 0 || lastActivityAt == null) {
+                return false;
+            }
+            return Duration.between(lastActivityAt, now()).toMillis() >= forceRebindIntervalMs;
+        }
+
+        private long computeBackoffDelayMs(int failureCount) {
+            long baseDelay = Math.max(MIN_BACKOFF_MS, props.getReconnectDelayMs());
+            int exponent = Math.max(0, Math.min(failureCount - 1, 6));
+            long delay = baseDelay;
+            for (int i = 0; i < exponent; i++) {
+                delay = Math.min(delay * 2L, MAX_BACKOFF_MS);
+            }
+            // Jittered exponential backoff reduces retry bursts while still allowing recovery fairly quickly
+            // after the first few failures.
+            return Math.min(MAX_BACKOFF_MS, applyJitter(delay));
+        }
+
+        private void destroySessionOnly() {
+            try {
+                if (session != null) {
+                    session.destroy();
+                }
+            } catch (Exception ignore) {
+            }
+            session = null;
+        }
     }
 
-    /**
-     * Receives inbound PDUs from the SMSC.
-     * <p>
-     * For many SMSCs:
-     * - DeliverSm is used for delivery receipts (DLR).
-     * - enquire_link may be sent by SMSC to check connectivity.
-     * <p>
-     * Current behavior:
-     * - Log inbound requests at debug
-     * - Always ACK by returning request.createResponse()
-     * <p>
-     * Production TODO:
-     * - Parse DeliverSm for DLR and update message status in your database.
-     */
-    private static final class SimpleSessionHandler extends com.cloudhopper.smpp.impl.DefaultSmppSessionHandler {
+    private record RebindDecision(boolean required, boolean waitingForBackoff, boolean idleRebind, String reason) {
+    }
+
+    private static final class SimpleSessionHandler extends DefaultSmppSessionHandler {
+        private final SessionHolder holder;
         private final String name;
 
-        private SimpleSessionHandler(String name) {
-            this.name = name;
+        private SimpleSessionHandler(SessionHolder holder) {
+            this.holder = holder;
+            this.name = holder.name;
         }
 
         @Override
         @SuppressWarnings("rawtypes")
         public PduResponse firePduRequestReceived(PduRequest request) {
+            holder.markActivity();
             log.debug("SMPP inbound PDU session={} cmdId={} seq={}", name, request.getCommandId(), request.getSequenceNumber());
             return request.createResponse();
         }
 
         @Override
         public void fireChannelUnexpectedlyClosed() {
-            // This is a signal that your bind is gone; your next send() will trigger ensureBound().
-            // If you want faster recovery, you can trigger an async rebind attempt here.
+            // Cloudhopper calls this when the TCP/SMPP channel disappears underneath us.
+            // We do not bind immediately here; instead we mark the session and let the health loop
+            // recover it in a controlled, observable way.
+            holder.markForRebind();
             log.warn("SMPP channel unexpectedly closed session={}", name);
         }
     }
