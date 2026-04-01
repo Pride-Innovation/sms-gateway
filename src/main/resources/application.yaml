@@ -40,6 +40,10 @@ management:
     health:
       probes:
         enabled: true
+      # Always expose component and detail sections so the new SMPP health indicator is usable
+      # from actuator without having to redeploy with extra management settings.
+      show-components: always
+      show-details: always
 
 sms:
   smpp:
@@ -61,7 +65,14 @@ sms:
 
     windowSize: 50
     enquireLinkIntervalMs: 30000
+    # Used as the base delay for exponential bind retry backoff after failures.
     reconnectDelayMs: 10000
+    # Scheduler cadence that checks SMPP session health, executes idle-time rebinds,
+    # and performs controlled recovery after channel closures.
+    healthCheckIntervalMs: ${MTN_SMPP_HEALTH_CHECK_INTERVAL_MS:30000}
+    # MTN asked for a fresh rebind after idle periods. The code treats this as an idle timeout,
+    # not a hard teardown while traffic is actively flowing.
+    forceRebindIntervalMs: ${MTN_SMPP_FORCE_REBIND_INTERVAL_MS:30000}
 
     registeredDelivery: true
 
@@ -90,7 +101,10 @@ sms:
       bindTimeoutMs: 30000
       windowSize: 50
       enquireLinkIntervalMs: 30000
+      # Airtel uses the same backoff logic, but forced rebind is off by default unless enabled explicitly.
       reconnectDelayMs: 10000
+      healthCheckIntervalMs: ${AIRTEL_SMPP_HEALTH_CHECK_INTERVAL_MS:30000}
+      forceRebindIntervalMs: ${AIRTEL_SMPP_FORCE_REBIND_INTERVAL_MS:0}
       registeredDelivery: true
       defaultSenderId: ${AIRTEL_SMPP_SENDER_ID:}
       tps: ${AIRTEL_SMPP_TPS:10}
