@@ -1,6 +1,7 @@
 package com.sms.gateway.config;
 
 import com.sms.gateway.smpp.SmppSessionManager;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 public class SmppProvidersConfig {
     @Bean("airtelSmppSessionManager")
     @ConditionalOnExpression("T(org.springframework.util.StringUtils).hasText('${sms.airtel.smpp.host:}') && ${sms.airtel.smpp.port:0} > 0 && T(org.springframework.util.StringUtils).hasText('${sms.airtel.smpp.systemId:}')")
-    public SmppSessionManager airtelSmppSessionManager(AirtelSmppProperties props) {
+    public SmppSessionManager airtelSmppSessionManager(AirtelSmppProperties props, MeterRegistry meterRegistry) {
         // Separate SMPP session manager for Airtel.
         // MTN continues to use the default SmppSessionManager bean bound to sms.smpp.
         SmppProperties p = new SmppProperties();
@@ -26,10 +27,12 @@ public class SmppProvidersConfig {
         p.setWindowSize(props.getWindowSize());
         p.setEnquireLinkIntervalMs(props.getEnquireLinkIntervalMs());
         p.setReconnectDelayMs(props.getReconnectDelayMs());
+        p.setHealthCheckIntervalMs(props.getHealthCheckIntervalMs());
+        p.setForceRebindIntervalMs(props.getForceRebindIntervalMs());
         p.setRegisteredDelivery(props.isRegisteredDelivery());
         p.setDefaultSenderId(props.getDefaultSenderId());
         p.setTps(props.getTps());
         p.setSessions(props.getSessions());
-        return new SmppSessionManager(p);
+        return new SmppSessionManager(p, meterRegistry);
     }
 }
