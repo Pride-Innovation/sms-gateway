@@ -21,6 +21,8 @@ public class AirtelSmppProperties {
     private int windowSize;
     private int enquireLinkIntervalMs;
     private int reconnectDelayMs;
+    private int healthCheckIntervalMs = 30000;
+    private int forceRebindIntervalMs;
 
     private boolean registeredDelivery;
     private String defaultSenderId;
