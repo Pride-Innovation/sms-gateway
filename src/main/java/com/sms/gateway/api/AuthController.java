@@ -5,6 +5,7 @@ import com.sms.gateway.adminuser.AdminPasswordPolicyService;
 import com.sms.gateway.adminuser.AdminUserLoginOtpService;
 import com.sms.gateway.adminuser.AdminUserRepository;
 import com.sms.gateway.adminuser.AdminUserService;
+import com.sms.gateway.security.JwtTokenRevocationService;
 import com.sms.gateway.security.JwtTokenService;
 import com.sms.gateway.security.UserPrincipal;
 import io.jsonwebtoken.Claims;
@@ -25,17 +26,20 @@ public class AuthController {
 
     private final AdminUserRepository adminUserRepository;
     private final JwtTokenService jwtTokenService;
+    private final JwtTokenRevocationService jwtTokenRevocationService;
     private final AdminUserService adminUserService;
     private final AdminUserLoginOtpService adminUserLoginOtpService;
     private final AdminPasswordPolicyService adminPasswordPolicyService;
 
     public AuthController(AdminUserRepository adminUserRepository,
                           JwtTokenService jwtTokenService,
+                          JwtTokenRevocationService jwtTokenRevocationService,
                           AdminUserService adminUserService,
                           AdminUserLoginOtpService adminUserLoginOtpService,
                           AdminPasswordPolicyService adminPasswordPolicyService) {
         this.adminUserRepository = adminUserRepository;
         this.jwtTokenService = jwtTokenService;
+        this.jwtTokenRevocationService = jwtTokenRevocationService;
         this.adminUserService = adminUserService;
         this.adminUserLoginOtpService = adminUserLoginOtpService;
         this.adminPasswordPolicyService = adminPasswordPolicyService;
@@ -123,6 +127,8 @@ public class AuthController {
 
     public record RefreshRequest(@NotBlank String refreshToken) {}
 
+    public record LogoutRequest(@NotBlank String refreshToken) {}
+
     @PostMapping("/refresh")
     public ResponseEntity<?> refresh(@RequestBody RefreshRequest req) {
         try {
@@ -154,6 +160,35 @@ public class AuthController {
         } catch (Exception e) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid refresh token"));
         }
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(
+            @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader,
+            @RequestBody @Valid LogoutRequest req
+    ) {
+        Claims accessClaims = jwtTokenService.parseWithoutRevocation(extractBearerToken(authorizationHeader));
+        if (!"access".equals(accessClaims.get("type"))) {
+            return ResponseEntity.status(400).body(Map.of("error", "Invalid access token type"));
+        }
+
+        Claims refreshClaims = jwtTokenService.parseWithoutRevocation(req.refreshToken());
+        if (!"refresh".equals(refreshClaims.get("type"))) {
+            return ResponseEntity.status(400).body(Map.of("error", "Invalid refresh token type"));
+        }
+        if (!String.valueOf(accessClaims.getSubject()).equals(String.valueOf(refreshClaims.getSubject()))) {
+            return ResponseEntity.status(400).body(Map.of("error", "Access token and refresh token do not belong to the same user"));
+        }
+
+        jwtTokenRevocationService.revoke(accessClaims);
+        jwtTokenRevocationService.revoke(refreshClaims);
+        SecurityContextHolder.clearContext();
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Logged out successfully",
+                "accessTokenRevoked", true,
+                "refreshTokenRevoked", true
+        ));
     }
 
     public record ChangePasswordRequest(@NotBlank String oldPassword, @NotBlank String newPassword) {}
