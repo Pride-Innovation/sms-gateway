@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class JwtTokenService {
@@ -23,8 +24,9 @@ public class JwtTokenService {
     private final long accessTtlSeconds;
     private final long refreshTtlSeconds;
     private final long passwordChangeTtlSeconds;
+    private final JwtTokenRevocationService jwtTokenRevocationService;
 
-    public JwtTokenService(SecurityProperties securityProperties) {
+    public JwtTokenService(SecurityProperties securityProperties, JwtTokenRevocationService jwtTokenRevocationService) {
         SecurityProperties.Jwt jwt = securityProperties.getJwt();
         SecurityProperties.Admin admin = securityProperties.getAdmin();
         String configured = jwt.getSecret();
@@ -35,6 +37,7 @@ public class JwtTokenService {
         this.accessTtlSeconds = jwt.getAccessTtlSeconds();
         this.refreshTtlSeconds = jwt.getRefreshTtlSeconds();
         this.passwordChangeTtlSeconds = Math.max(60L, admin.getPasswordChangeTokenTtlMinutes() * 60L);
+        this.jwtTokenRevocationService = jwtTokenRevocationService;
     }
 
     public String createAccessToken(String subject, List<String> roles) {
@@ -61,6 +64,7 @@ public class JwtTokenService {
     private String createToken(String subject, List<String> roles, long ttlSeconds, Map<String, Object> extraClaims) {
         Instant now = Instant.now();
         return Jwts.builder()
+                .setId(UUID.randomUUID().toString())
                 .setSubject(subject)
                 .setIssuedAt(Date.from(now))
                 .setExpiration(Date.from(now.plusSeconds(ttlSeconds)))
@@ -71,6 +75,14 @@ public class JwtTokenService {
     }
 
     public Claims parse(String token) {
+        Claims claims = parseWithoutRevocation(token);
+        if (jwtTokenRevocationService.isRevoked(claims.getId())) {
+            throw new IllegalArgumentException("Token has been revoked");
+        }
+        return claims;
+    }
+
+    public Claims parseWithoutRevocation(String token) {
         return Jwts.parserBuilder()
                 .setSigningKey(secretKey)
                 .build()
