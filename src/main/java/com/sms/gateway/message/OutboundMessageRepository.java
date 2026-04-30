@@ -35,6 +35,7 @@ public interface OutboundMessageRepository extends JpaRepository<OutboundMessage
 
     Optional<OutboundMessage> findByRequestId(String requestId);
 
+    /*
     @Query(value = """
             SELECT *
             FROM outbound_messages
@@ -47,6 +48,21 @@ public interface OutboundMessageRepository extends JpaRepository<OutboundMessage
               id ASC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
+     */
+    @Query(value = """
+            SELECT TOP 1 *
+            FROM outbound_messages WITH (ROWLOCK, READPAST, UPDLOCK)
+            WHERE carrier = :carrier
+              AND status IN ('QUEUED', 'RETRY')
+              AND (
+                    next_attempt_at IS NULL 
+                    OR next_attempt_at <= SYSDATETIME()
+                  )
+            ORDER BY
+              CASE WHEN message_type = 'OTP' THEN 0 ELSE 1 END,
+              priority DESC,
+              id ASC
             """, nativeQuery = true)
     Optional<OutboundMessage> findNextForDispatch(@Param("carrier") String carrier);
 
