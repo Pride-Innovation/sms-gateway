@@ -3,10 +3,10 @@ server:
 
 spring:
   datasource:
-    url: ${MYSQL_URL}
-    username: ${MYSQL_USER}
-    password: ${MYSQL_PASSWORD}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${MSSQL_URL}
+    username: ${MSSQL_USER}
+    password: ${MSSQL_PASSWORD}
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
     hikari:
       maximumPoolSize: 30
   jpa:
@@ -19,6 +19,7 @@ spring:
       hibernate.order_updates: true
       org.hibernate.envers.store_data_at_delete: true
       org.hibernate.envers.global_with_modified_flag: true
+    database-platform: org.hibernate.dialect.SQLServerDialect
   mail:
     host: ${EMAIL_HOST}
     port: ${EMAIL_PORT}
@@ -152,6 +153,7 @@ app:
     admin:
       username: ${ADMIN_USERNAME}
       password: ${ADMIN_PASSWORD}
+      email: ${ADMIN_EMAIL}
       passwordExpiryDays: ${ADMIN_PASSWORD_EXPIRY_DAYS:90}
       passwordChangeTokenTtlMinutes: ${ADMIN_PASSWORD_CHANGE_TOKEN_TTL_MINUTES:10}
       maxFailedLoginAttempts: ${ADMIN_MAX_FAILED_LOGIN_ATTEMPTS:3}
@@ -179,3 +181,9 @@ app:
     client:
       password:
         email: ${CLIENT_ACCOUNT_PASSWORD_EMAIL}
+
+
+#logging:
+#  level:
+#    org.hibernate.SQL: DEBUG
+#    org.hibernate.orm.jdbc.bind: TRACE
