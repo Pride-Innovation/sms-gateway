@@ -1,6 +1,7 @@
 package com.sms.gateway.adminuser;
 
 import com.sms.gateway.security.SecurityProperties;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -32,26 +33,22 @@ public class SuperAdminSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         String username = securityProperties.getAdmin().getUsername();
         String password = securityProperties.getAdmin().getPassword();
-
-        if (username == null || username.isBlank()) {
-            throw new IllegalStateException("Missing super-admin username. Set app.security.admin.username");
-        }
-        if (password == null || password.isBlank()) {
-            throw new IllegalStateException("Missing super-admin password. Set app.security.admin.password");
-        }
+        String email = getEmail(username, password);
 
         String normalizedUsername = username.trim();
+        String normalizedUserEmail = email.trim();
 
         AdminUser admin = adminUserRepository.findByUsernameIgnoreCase(normalizedUsername)
                 .orElseGet(() -> {
                     AdminUser created = new AdminUser();
                     created.setUsername(normalizedUsername);
+                    created.setEmail(normalizedUserEmail);
                     return created;
                 });
 
         admin.setEnabled(true);
 
-        // Only update hash if password changed (BCrypt is salted, so we must verify using matches).
+        // Only update hash if password changed (Bcrypt is salted, so we must verify using matches).
         boolean matches = admin.getPasswordHash() != null && passwordEncoder.matches(password, admin.getPasswordHash());
         if (!matches) {
             admin.setPasswordHash(passwordEncoder.encode(password));
@@ -61,5 +58,21 @@ public class SuperAdminSeeder implements ApplicationRunner {
         }
 
         adminUserRepository.save(admin);
+    }
+
+    private @NonNull String getEmail(String username, String password) {
+        String email = securityProperties.getAdmin().getEmail();
+
+        if (username == null || username.isBlank()) {
+            throw new IllegalStateException("Missing super-admin username. Set app.security.admin.username");
+        }
+        if (password == null || password.isBlank()) {
+            throw new IllegalStateException("Missing super-admin password. Set app.security.admin.password");
+        }
+
+        if (email == null || email.isBlank()) {
+            throw new IllegalStateException("Missing super-admin email. Set app.security.admin.email");
+        }
+        return email;
     }
 }
