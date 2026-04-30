@@ -32,6 +32,11 @@ public class SecurityProperties {
         private String password;
 
         /**
+         * Super-admin email for accessing /api/admin/** endpoints (HTTP Basic).
+         */
+        private String email;
+
+        /**
          * Maximum password age in days for admin users.
          */
         private long passwordExpiryDays = 90;
