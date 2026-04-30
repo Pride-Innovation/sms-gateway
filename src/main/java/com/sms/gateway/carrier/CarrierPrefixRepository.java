@@ -31,8 +31,24 @@ public interface CarrierPrefixRepository extends JpaRepository<CarrierPrefix, Lo
 
     Optional<CarrierPrefix> findByCarrierAndPrefix(Carrier carrier, String prefix);
 
+//    MYSQL
+/*
     @Query(
-            value = "SELECT carrier FROM carrier_prefixes WHERE active=1 AND ?1 LIKE CONCAT(prefix, '%') ORDER BY LENGTH(prefix) DESC LIMIT 1",
+            value = "SELECT carrier FROM carrier_prefixes " +
+                    "WHERE active=1 AND ?1 LIKE CONCAT(prefix, '%') " +
+                    "ORDER BY LENGTH(prefix) DESC LIMIT 1",
+            nativeQuery = true
+    )
+// MSSQL
+ */
+    @Query(
+            value = """
+                    SELECT TOP 1 carrier
+                    FROM carrier_prefixes
+                    WHERE active = 1
+                      AND ?1 LIKE prefix + '%'
+                    ORDER BY LEN(prefix) DESC
+                    """,
             nativeQuery = true
     )
     String resolveCarrierNative(String normalizedMsisdn);
